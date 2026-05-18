@@ -1,0 +1,12 @@
+{
+  "name": "hermes-agent-mobile-client",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Android WebView client and connector helper for Hermes Agent Mobile.",
+  "bin": {
+    "hermes-mobile": "packages/hermes-mobile-connector/bin/hermes-mobile.js"
+  },
+  "files": [
+    "packages/hermes-mobile-connector"
+  ]
+}

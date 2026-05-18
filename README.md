@@ -35,7 +35,9 @@ iOS is not implemented in this repo.
 - `demo/hermes-agent-mobile-demo.gif` - README-compatible inline demo
 - `demo/hermes-agent-mobile-demo.mp4` - trimmed app demo recording
 - `scripts/run-emulator.sh` - helper script for emulator startup
-- `scripts/setup-vps-dashboard.sh` - one-shot VPS dashboard setup
+- `packages/hermes-mobile-connector/` - `npx` connector command for starting
+  Hermes dashboard and printing a mobile URL
+- `scripts/setup-vps-dashboard.sh` - legacy VPS dashboard setup wrapper
 
 ## Download APK
 
@@ -46,28 +48,37 @@ Direct APK download:
 Android may ask you to allow "Install unknown apps" for the browser or file
 manager used to open the APK.
 
-## Requirements
+## Recommended Setup
 
 1. A working Hermes setup on PC or VPS.
-2. Hermes dashboard reachable from your Android device.
-3. Hermes dashboard started with embedded chat:
-   `hermes dashboard --host 0.0.0.0 --port 9119 --no-open --insecure --tui`
-4. Open firewall/security-group port for dashboard (example: `9119`).
-5. Android device or emulator with internet access to that host.
-6. For best auto-discovery, phone and Hermes host should be on the same LAN.
-
-## One-shot VPS setup
-
-After cloning this repo on your VPS:
+2. Install Tailscale on Android and on the PC/VPS where Hermes runs.
+3. Log both devices into the same Tailscale network.
+4. Run the connector where Hermes Agent is installed:
 
 ```bash
-cd Hermes-Agent-Mobile-Client/scripts
-chmod +x setup-vps-dashboard.sh
-./setup-vps-dashboard.sh
+npx github:areu01or00/Hermes-Agent-Mobile-Client install
 ```
 
-It writes/starts a `systemd` service, checks health, opens `ufw` port `9119`
-if available, and prints the mobile URL.
+The connector starts Hermes dashboard with embedded chat:
+
+```bash
+hermes dashboard --host 0.0.0.0 --port 9119 --no-open --insecure --tui
+```
+
+It then prints URLs for the Android app. Prefer the Tailscale URL when present.
+
+Management commands:
+
+```bash
+npx github:areu01or00/Hermes-Agent-Mobile-Client status
+npx github:areu01or00/Hermes-Agent-Mobile-Client url
+npx github:areu01or00/Hermes-Agent-Mobile-Client restart
+npx github:areu01or00/Hermes-Agent-Mobile-Client logs
+npx github:areu01or00/Hermes-Agent-Mobile-Client uninstall
+```
+
+Without Tailscale, same-Wi-Fi local IP can work. VPS/public-IP use requires the
+dashboard port to be reachable from the phone network.
 
 ## Server-side check
 
@@ -88,18 +99,25 @@ adb install -r apk/hermes-agent-mobile-client-release.apk
 
 Launch app:
 
+- Install Hermes Mobile Connector shows the exact `npx` command.
+- Paste connector URL opens the real Hermes dashboard `/chat`.
 - Same Wi-Fi auto-discovery probes local Hermes dashboard candidates.
-- VPS / Cloud accepts a manual dashboard base URL and opens `/chat` directly.
 - Use Saved Endpoint reopens the last manually connected dashboard base URL.
+- The top chrome includes a connector-state dot button. It checks the saved
+  dashboard `/api/status` and reports URL, HTTP status, Hermes version,
+  gateway state, and active session count without restarting anything.
+- The text-size button adjusts WebView terminal scale for narrow phone screens.
+- The power button opens the app menu, including logout/reset.
+- If the embedded TUI reports `[session ended]`, the app shows an overlay with
+  `Open fresh TUI`. That reloads the saved Hermes `/chat` route so the user can
+  resume or create a session inside the real TUI.
 - If dashboard navigation fails, the app shows the WebView network/HTTP error
   instead of leaving a blank screen.
 - The app wraps WebView with an Android input bridge so soft-keyboard typing,
   Backspace, Enter, Delete, and arrow-key style operations are routed into the
   Hermes xterm chat page.
 
-For VPS-only setups outside local LAN, you should still make the VPS dashboard
-reachable from the phone network (`http://<vps-ip>:9119`) and connect once from
-the same route; app will persist the last successful base URL.
+For VPS-only setups, prefer Tailscale so `9119` does not need to be public.
 
 ## Troubleshooting
 
@@ -162,23 +180,25 @@ curl -fsS http://<host>:9119/chat
 sudo ss -ltnp | grep 9119
 ```
 
-6. If the user wants a persistent VPS setup, use the included helper:
+6. Use the connector command as the normal persistent setup path:
 
 ```bash
-cd scripts
-chmod +x setup-vps-dashboard.sh
-./setup-vps-dashboard.sh
+npx github:areu01or00/Hermes-Agent-Mobile-Client install
 ```
 
-7. Only debug the APK after `/api/status` and `/chat` are reachable from the
+7. Prefer Tailscale when the phone and Hermes host are not on the same LAN.
+8. Only debug the APK after `/api/status` and `/chat` are reachable from the
    phone network. Most connection failures are wrong URL, firewall, dashboard
    not running, dashboard bound to localhost, or missing `--tui`.
-8. Do not make hidden edits to the user's Hermes Agent checkout as a default
+9. Do not make hidden edits to the user's Hermes Agent checkout as a default
    fix. This client is intended to work with stock Hermes dashboard. If a
    Hermes-side change is genuinely required, document it as an upstream
    compatibility issue.
-9. Known mobile caveat: Android soft-keyboard input is adapted in the APK.
+10. Known mobile caveat: Android soft-keyboard input is adapted in the APK.
    Terminal scroll inside WebView may still vary by device/WebView version.
+11. If a user sees `[session ended]`, use the app overlay to open a fresh TUI
+    before changing server code. The Android client does not own Hermes session
+    resurrection; it only reopens the real dashboard chat surface.
 
 ## Known gaps
 

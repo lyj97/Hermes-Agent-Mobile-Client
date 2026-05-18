@@ -1,13 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Hermes dashboard bootstrap for VPS use.
-# This script:
-# 1) validates `hermes` is installed
-# 2) writes a systemd service for dashboard with --tui
-# 3) restarts/enables the service
-# 4) opens UFW port 9119 if UFW is present
-# 5) prints working endpoint for mobile app
+# Legacy wrapper. Prefer:
+#   npx github:areu01or00/Hermes-Agent-Mobile-Client install
+#
+# Kept for users who already copied the old VPS script path.
 
 SERVICE_NAME="hermes-dashboard.service"
 SERVICE_PATH="/etc/systemd/system/${SERVICE_NAME}"
@@ -75,10 +72,8 @@ if ! curl -fsS "http://127.0.0.1:${DASHBOARD_PORT}/api/status" >/dev/null 2>&1; 
   exit 1
 fi
 
-echo "[5/6] Opening UFW port (if UFW exists)"
-if command -v ufw >/dev/null 2>&1; then
-  sudo ufw allow "${DASHBOARD_PORT}/tcp" >/dev/null 2>&1 || true
-fi
+echo "[5/6] Skipping firewall mutation"
+echo "Tailscale is recommended. If using public VPS IP, open TCP ${DASHBOARD_PORT} yourself."
 
 echo "[6/6] Detecting public endpoint"
 PUBLIC_IP="$(curl -fsS https://api.ipify.org || true)"
@@ -94,4 +89,4 @@ echo "Service: ${SERVICE_NAME}"
 echo "Local check:  http://127.0.0.1:${DASHBOARD_PORT}/api/status"
 echo "Mobile URL:   ${MOBILE_URL}"
 echo
-echo "If mobile cannot connect, open cloud security-group inbound TCP ${DASHBOARD_PORT}."
+echo "If mobile cannot connect over public IP, open cloud security-group inbound TCP ${DASHBOARD_PORT}."
