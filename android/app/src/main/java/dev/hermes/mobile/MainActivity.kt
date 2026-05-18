@@ -201,20 +201,83 @@ class MainActivity : ComponentActivity() {
 
     private fun renderConnectionHome() {
         showingConnectionHub = true
+        val saved = getSavedDashboardBase()
+        val savedBlock = if (!saved.isNullOrBlank()) {
+            """
+            <a class="primary" href="hermes://saved">
+              <span class="icon">↻</span>
+              <span><b>Resume saved connection</b><small>$saved</small></span>
+            </a>
+            """.trimIndent()
+        } else {
+            ""
+        }
         val html = """
-            <html><body style="margin:0;background:#041c1c;color:#ffe6cb;font-family:monospace">
-              <div style="padding:28px">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-                  <div style="font-size:22px;letter-spacing:1px">HERMES CONNECTION HUB</div>
-                  <a href="hermes://menu" style="text-decoration:none;color:#ffe6cb;background:#0d1d18;border:1px solid #21362d;padding:8px 12px">☰</a>
+            <html>
+            <head>
+              <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+              <style>
+                :root{--bg:#031615;--panel:#081f1c;--line:#264139;--ink:#fff0d2;--muted:#91a196;--gold:#f5c84c;--green:#7cff9b;}
+                *{box-sizing:border-box}
+                body{margin:0;min-height:100svh;background:
+                  radial-gradient(circle at 50% -10%,rgba(245,200,76,.18),transparent 32%),
+                  radial-gradient(circle at 20% 90%,rgba(124,255,155,.10),transparent 34%),
+                  linear-gradient(180deg,#061b19 0%,#020b0b 100%);
+                  color:var(--ink);font-family:monospace;letter-spacing:.02em}
+                body:before{content:"";position:fixed;inset:0;pointer-events:none;background-image:
+                  linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
+                  linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
+                  background-size:26px 26px;mask-image:linear-gradient(#000,transparent 82%)}
+                .wrap{padding:32px 22px 28px;max-width:720px;margin:0 auto}
+                .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px}
+                .brand{font-size:13px;color:var(--gold);letter-spacing:.42em;text-transform:uppercase}
+                .mark{width:42px;height:42px;border:1px solid rgba(245,200,76,.55);border-radius:999px;display:grid;place-items:center;color:var(--gold);background:rgba(8,31,28,.72);box-shadow:0 0 42px rgba(245,200,76,.12)}
+                h1{font-size:31px;line-height:1.05;margin:0 0 12px;text-transform:uppercase;letter-spacing:.08em}
+                .lead{color:var(--muted);font-size:14px;line-height:1.55;margin:0 0 28px;max-width:35em}
+                .rail{border-left:1px solid rgba(245,200,76,.42);padding-left:14px;margin-bottom:20px;color:#d7c59a;font-size:12px;line-height:1.55}
+                .stack{display:grid;gap:11px}
+                a{color:inherit;text-decoration:none}
+                .primary,.choice{display:flex;gap:14px;align-items:center;padding:16px 15px;border:1px solid var(--line);background:linear-gradient(135deg,rgba(8,31,28,.92),rgba(4,18,17,.92));border-radius:18px;min-height:72px}
+                .primary{border-color:rgba(245,200,76,.75);box-shadow:0 0 0 1px rgba(245,200,76,.12) inset,0 16px 40px rgba(0,0,0,.22)}
+                .choice:active,.primary:active{transform:translateY(1px);border-color:var(--gold)}
+                .icon{width:42px;height:42px;border-radius:14px;border:1px solid rgba(245,200,76,.45);display:grid;place-items:center;color:var(--gold);font-size:21px;flex:0 0 auto;background:rgba(245,200,76,.06)}
+                b{display:block;font-size:14px;margin-bottom:5px}
+                small{display:block;color:var(--muted);font-size:11px;line-height:1.35}
+                .hint{margin-top:18px;padding:14px 15px;border:1px dashed rgba(145,161,150,.35);border-radius:16px;color:var(--muted);font-size:11px;line-height:1.5}
+                .footer{display:flex;justify-content:space-between;align-items:center;margin-top:28px;color:#5f746b;font-size:11px}
+                .menu{color:var(--ink);border:1px solid rgba(255,240,210,.25);border-radius:999px;padding:9px 12px;background:rgba(8,31,28,.55)}
+              </style>
+            </head>
+            <body>
+              <div class="wrap">
+                <div class="top">
+                  <div class="brand">Hermes Agent</div>
+                  <a class="menu" href="hermes://menu">Power</a>
                 </div>
-                <div style="font-size:13px;color:#89917e;margin-bottom:18px">Choose how you want to connect</div>
-                <a href="hermes://discover" style="display:block;text-decoration:none;background:#0d1d18;color:#ffe6cb;padding:16px;border:1px solid #21362d;margin-bottom:10px">Same Wi-Fi (Auto Discover)</a>
-                <a href="hermes://manual" style="display:block;text-decoration:none;background:#0d1d18;color:#ffe6cb;padding:16px;border:1px solid #21362d;margin-bottom:10px">VPS / Cloud (Enter URL)</a>
-                <a href="hermes://saved" style="display:block;text-decoration:none;background:#0d1d18;color:#ffe6cb;padding:16px;border:1px solid #21362d;margin-bottom:10px">Use Saved Endpoint</a>
-                <a href="hermes://script" style="display:block;text-decoration:none;background:#0d1d18;color:#ffe6cb;padding:16px;border:1px solid #21362d;margin-bottom:10px">Show VPS Setup Script</a>
+                <div class="mark">☤</div>
+                <h1>Connect your Hermes</h1>
+                <p class="lead">Run the mobile connector where Hermes Agent already lives. It starts the dashboard, prefers Tailscale when available, and prints one URL for this app.</p>
+                <div class="rail">Recommended path: Tailscale on phone + host, then one connector command.</div>
+                <div class="stack">
+                  $savedBlock
+                  <a class="primary" href="hermes://script">
+                    <span class="icon">⌁</span>
+                    <span><b>Install Hermes Mobile Connector</b><small>Copy the npx command for PC, Mac, Linux, or VPS.</small></span>
+                  </a>
+                  <a class="choice" href="hermes://manual">
+                    <span class="icon">↗</span>
+                    <span><b>Paste connector URL</b><small>Use the URL printed by the connector, usually a Tailscale address.</small></span>
+                  </a>
+                  <a class="choice" href="hermes://discover">
+                    <span class="icon">⌕</span>
+                    <span><b>Scan same Wi-Fi</b><small>Fallback for local dashboards on port 9119.</small></span>
+                  </a>
+                </div>
+                <div class="hint">No mocks. No separate mobile backend. This app opens the real Hermes dashboard.</div>
+                <div class="footer"><span>Android client</span><span>Hermes owns the agent runtime</span></div>
               </div>
-            </body></html>
+            </body>
+            </html>
         """.trimIndent()
         mainHandler.post { webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null) }
     }
@@ -255,7 +318,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadDashboardBase(base: String, persist: Boolean) {
-        val normalizedBase = base.removeSuffix("/")
+        val normalizedBase = normalizeDashboardBase(base)
+        if (normalizedBase.isBlank()) {
+            renderStatusPage("Connector URL is empty.", attemptedBases.toList())
+            renderConnectionHome()
+            return
+        }
         if (persist) {
             getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                 .edit()
@@ -264,7 +332,7 @@ class MainActivity : ComponentActivity() {
         }
         showingConnectionHub = false
         val chatUrl = "$normalizedBase/chat"
-        renderStatusPage("Opening Hermes dashboard...", listOf(chatUrl))
+        renderStatusPage("Opening Hermes dashboard...", listOf(normalizedBase))
         startupExecutor.execute {
             warmupDashboard(normalizedBase)
             mainHandler.post { webView.loadUrl(chatUrl) }
@@ -286,7 +354,12 @@ class MainActivity : ComponentActivity() {
 
     private fun getSavedDashboardBase(): String? {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return prefs.getString(PREF_LAST_DASHBOARD_BASE, null)?.trim()?.removeSuffix("/")
+        val raw = prefs.getString(PREF_LAST_DASHBOARD_BASE, null) ?: return null
+        val normalized = normalizeDashboardBase(raw)
+        if (normalized.isNotBlank() && normalized != raw) {
+            prefs.edit().putString(PREF_LAST_DASHBOARD_BASE, normalized).apply()
+        }
+        return normalized.ifBlank { null }
     }
 
     private fun getSavedTextZoom(): Int {
@@ -392,7 +465,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun isHermesDashboardBase(baseUrl: String): Boolean {
-        val clean = baseUrl.removeSuffix("/")
+        val clean = normalizeDashboardBase(baseUrl)
+        if (clean.isBlank()) return false
         val statusUrl = "$clean/api/status"
         return try {
             Log.d(LOG_TAG, "probe $statusUrl")
@@ -415,7 +489,7 @@ class MainActivity : ComponentActivity() {
         val attemptedHtml = if (attempted.isEmpty()) {
             "<li>No endpoints attempted yet.</li>"
         } else {
-            attempted.joinToString("") { "<li>${it}/api/status</li>" }
+            attempted.joinToString("") { "<li>${normalizeDashboardBase(it)}/api/status</li>" }
         }
         val html = """
             <html><body style="background:#041c1c;color:#ffe6cb;font-family:monospace;padding:24px;line-height:1.45">
@@ -432,7 +506,7 @@ class MainActivity : ComponentActivity() {
     private fun promptForManualEndpoint() {
         mainHandler.post {
             val input = EditText(this).apply {
-                hint = "http://<host>:9119"
+                hint = "http://device.tailnet.ts.net:9119"
                 setText("http://")
                 setTextColor(Color.parseColor("#ffe6cb"))
                 setHintTextColor(Color.parseColor("#89917e"))
@@ -445,13 +519,13 @@ class MainActivity : ComponentActivity() {
                 setPadding(36, 28, 36, 20)
             }
             val title = TextView(this).apply {
-                text = "VPS / CLOUD ENDPOINT"
+                text = "PASTE CONNECTOR URL"
                 setTextColor(Color.parseColor("#ffe6cb"))
                 textSize = 16f
                 setPadding(0, 0, 0, 10)
             }
             val help = TextView(this).apply {
-                text = "Enter dashboard base URL (example: http://203.0.113.10:9119)"
+                text = "Paste the URL printed by hermes-mobile. Tailscale addresses are preferred because they avoid public firewall setup."
                 setTextColor(Color.parseColor("#89917e"))
                 textSize = 12f
                 setPadding(0, 0, 0, 14)
@@ -489,56 +563,41 @@ class MainActivity : ComponentActivity() {
     private fun normalizeDashboardBase(raw: String): String {
         val trimmed = raw.trim()
         if (trimmed.isBlank()) return ""
-        val withScheme = if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
             trimmed
         } else {
             "http://$trimmed"
         }
-        return withScheme
-            .removeSuffix("/")
-            .removeSuffix("/chat")
-            .removeSuffix("/")
+        return try {
+            val url = URL(withScheme)
+            val host = url.host
+            if (host.isNullOrBlank()) return ""
+            val protocol = if (url.protocol.equals("https", ignoreCase = true)) "https" else "http"
+            val port = if (url.port > 0) ":${url.port}" else ""
+            "$protocol://$host$port"
+        } catch (_: Exception) {
+            withScheme
+                .substringBefore("?")
+                .substringBefore("#")
+                .removeSuffix("/")
+                .removeSuffix("/chat")
+                .removeSuffix("/")
+        }
     }
 
     private fun showVpsScriptDialog() {
         val script = """
-            # Run on VPS after SSH
-            cat > setup-vps-dashboard.sh <<'EOF'
-            #!/usr/bin/env bash
-            set -euo pipefail
-            SERVICE_NAME="hermes-dashboard.service"
-            SERVICE_PATH="/etc/systemd/system/${'$'}{SERVICE_NAME}"
-            DASHBOARD_PORT=9119
-            DASHBOARD_HOST=0.0.0.0
-            RUN_USER="${'$'}USER"
-            RUN_HOME="$(eval echo "~${'$'}{RUN_USER}")"
-            WORKDIR="${'$'}{RUN_HOME}"
-            if ! command -v hermes >/dev/null 2>&1; then echo "hermes not found"; exit 1; fi
-            sudo tee "${'$'}{SERVICE_PATH}" >/dev/null <<EOT
-            [Unit]
-            Description=Hermes Dashboard
-            After=network-online.target
-            Wants=network-online.target
-            [Service]
-            Type=simple
-            User=${'$'}{RUN_USER}
-            WorkingDirectory=${'$'}{WORKDIR}
-            Environment=HOME=${'$'}{RUN_HOME}
-            Environment=HERMES_DASHBOARD_TUI=1
-            ExecStart=$(command -v hermes) dashboard --host ${'$'}{DASHBOARD_HOST} --port ${'$'}{DASHBOARD_PORT} --no-open --insecure --tui
-            Restart=on-failure
-            RestartSec=3
-            [Install]
-            WantedBy=multi-user.target
-            EOT
-            sudo systemctl daemon-reload
-            sudo systemctl enable "${'$'}{SERVICE_NAME}" >/dev/null
-            sudo systemctl restart "${'$'}{SERVICE_NAME}"
-            if command -v ufw >/dev/null 2>&1; then sudo ufw allow 9119/tcp >/dev/null 2>&1 || true; fi
-            echo "Mobile URL: http://$(curl -fsS https://api.ipify.org):9119"
-            EOF
-            chmod +x setup-vps-dashboard.sh
-            ./setup-vps-dashboard.sh
+            # Run this where Hermes Agent is installed.
+            # Recommended: install Tailscale on this machine and on your phone first.
+
+            npx github:areu01or00/Hermes-Agent-Mobile-Client install
+
+            # Later:
+            npx github:areu01or00/Hermes-Agent-Mobile-Client status
+            npx github:areu01or00/Hermes-Agent-Mobile-Client url
+            npx github:areu01or00/Hermes-Agent-Mobile-Client restart
+            npx github:areu01or00/Hermes-Agent-Mobile-Client logs
+            npx github:areu01or00/Hermes-Agent-Mobile-Client uninstall
         """.trimIndent()
 
         val scroll = ScrollView(this).apply {
@@ -553,12 +612,12 @@ class MainActivity : ComponentActivity() {
         scroll.addView(text)
 
         AlertDialog.Builder(this)
-            .setTitle("VPS Setup Script")
+            .setTitle("Hermes Mobile Connector")
             .setView(scroll)
             .setPositiveButton("Copy") { _, _ ->
                 val cb = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                cb.setPrimaryClip(ClipData.newPlainText("vps_setup_script", script))
-                renderStatusPage("Script copied to clipboard. Paste it in VPS SSH shell.", emptyList())
+                cb.setPrimaryClip(ClipData.newPlainText("hermes_mobile_connector", script))
+                renderStatusPage("Connector command copied. Run it where Hermes Agent is installed, then paste the printed URL here.", emptyList())
                 renderConnectionHome()
             }
             .setNegativeButton("Back") { _, _ -> renderConnectionHome() }
@@ -575,8 +634,87 @@ class MainActivity : ComponentActivity() {
             "script" -> showVpsScriptDialog()
             "menu" -> showHamburgerMenu()
             "textsize" -> showTextSizeDialog()
+            "connector" -> showConnectorStateDialog()
+            "reloadtui" -> reloadFreshTui()
         }
         return true
+    }
+
+    private fun reloadFreshTui() {
+        val base = getSavedDashboardBase()
+        if (base.isNullOrBlank()) {
+            renderConnectionHome()
+            return
+        }
+        showingConnectionHub = false
+        renderStatusPage("Opening fresh Hermes TUI...", listOf(base))
+        webView.postDelayed({
+            webView.loadUrl("$base/chat")
+        }, 80)
+    }
+
+    private fun showConnectorStateDialog() {
+        val base = getSavedDashboardBase()
+        if (base.isNullOrBlank()) {
+            AlertDialog.Builder(this)
+                .setTitle("Connector State")
+                .setMessage("No saved Hermes connector URL yet.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Connector State")
+            .setMessage("Checking $base ...")
+            .setPositiveButton("Close", null)
+            .show()
+
+        startupExecutor.execute {
+            val message = runCatching {
+                val conn = (URL("$base/api/status").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 2500
+                    readTimeout = 2500
+                    instanceFollowRedirects = true
+                }
+                val code = conn.responseCode
+                val raw = if (code in 200..299) {
+                    conn.inputStream.bufferedReader().use { it.readText() }
+                } else {
+                    conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                }
+                conn.disconnect()
+
+                val json = runCatching { org.json.JSONObject(raw) }.getOrNull()
+                val version = json?.optString("version")?.takeIf { it.isNotBlank() }
+                    ?: json?.optString("hermes_version")?.takeIf { it.isNotBlank() }
+                    ?: "unknown"
+                val gateway = json?.optString("gateway_status")?.takeIf { it.isNotBlank() }
+                    ?: json?.optString("gateway")?.takeIf { it.isNotBlank() }
+                    ?: json?.optString("status")?.takeIf { it.isNotBlank() }
+                    ?: "unknown"
+                val sessions = json?.opt("active_sessions")?.toString()
+                    ?: json?.opt("sessions")?.toString()
+                    ?: "unknown"
+
+                """
+                URL: $base
+                HTTP: $code
+                Hermes: $version
+                Gateway: $gateway
+                Active sessions: $sessions
+                """.trimIndent()
+            }.getOrElse { err ->
+                """
+                URL: $base
+                Connector unreachable.
+
+                ${err.message.orEmpty()}
+                """.trimIndent()
+            }
+            mainHandler.post { dialog.setMessage(message) }
+        }
     }
 
     private fun showHamburgerMenu() {
@@ -664,71 +802,113 @@ class MainActivity : ComponentActivity() {
         view.evaluateJavascript(
             """
             (function(){
-              if(document.getElementById('hermes-mobile-client-style')) return;
-              var style=document.createElement('style');
-              style.id='hermes-mobile-client-style';
-              style.textContent=[
-                'html,body,#root{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}',
-                'body,*{overscroll-behavior:auto;}',
-                'input,textarea,select{font-size:16px!important;}',
-                '#hermes-mobile-power{width:34px;height:34px;border-radius:999px;border:1px solid rgba(255,230,203,.45);background:rgba(4,28,28,.25);color:#ffe6cb;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-size:17px;line-height:1;box-sizing:border-box;}',
-                '#hermes-mobile-power:hover,#hermes-mobile-power:active{background:rgba(255,215,94,.12);border-color:rgba(255,215,94,.75);color:#ffd75e;}',
-                '#hermes-mobile-textsize{width:34px;height:34px;border-radius:999px;border:1px solid rgba(255,230,203,.45);background:rgba(4,28,28,.25);color:#ffe6cb;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);font-size:15px;line-height:1;box-sizing:border-box;}',
-                '#hermes-mobile-textsize:hover,#hermes-mobile-textsize:active{background:rgba(255,215,94,.12);border-color:rgba(255,215,94,.75);color:#ffd75e;}'
-              ].join('\n');
-              document.head.appendChild(style);
+              if(!document.getElementById('hermes-mobile-client-style')){
+                var style=document.createElement('style');
+                style.id='hermes-mobile-client-style';
+                style.textContent=[
+                  'html,body,#root{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch;}',
+                  'body,*{overscroll-behavior:auto;}',
+                  'input,textarea,select{font-size:16px!important;}',
+                  '#hermes-mobile-power,#hermes-mobile-textsize,#hermes-mobile-connector{width:34px;height:34px;border-radius:999px;border:1px solid rgba(255,230,203,.45);background:rgba(4,28,28,.25);color:#ffe6cb;display:inline-flex;align-items:center;justify-content:center;text-decoration:none;backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);line-height:1;box-sizing:border-box;}',
+                  '#hermes-mobile-power{font-size:17px;}',
+                  '#hermes-mobile-textsize{font-size:15px;}',
+                  '#hermes-mobile-connector{font-size:18px;color:#65ff9a;border-color:rgba(101,255,154,.45);}',
+                  '#hermes-mobile-power:hover,#hermes-mobile-power:active,#hermes-mobile-textsize:hover,#hermes-mobile-textsize:active,#hermes-mobile-connector:hover,#hermes-mobile-connector:active{background:rgba(255,215,94,.12);border-color:rgba(255,215,94,.75);color:#ffd75e;}',
+                  '#hermes-mobile-dead-session{position:fixed;left:16px;right:16px;bottom:74px;z-index:99998;display:none;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border:1px solid rgba(255,215,94,.6);border-radius:18px;background:linear-gradient(135deg,rgba(4,28,28,.96),rgba(9,46,40,.94));color:#ffe6cb;box-shadow:0 18px 60px rgba(0,0,0,.45);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);font-family:monospace;}',
+                  '#hermes-mobile-dead-session.is-visible{display:flex;}',
+                  '#hermes-mobile-dead-session strong{display:block;color:#ffd75e;font-size:12px;letter-spacing:.12em;text-transform:uppercase;margin-bottom:3px;}',
+                  '#hermes-mobile-dead-session span{font-size:12px;opacity:.8;}',
+                  '#hermes-mobile-dead-session a{white-space:nowrap;color:#031818;background:#ffd75e;border:1px solid rgba(255,230,203,.55);border-radius:999px;padding:10px 13px;text-decoration:none;font-size:12px;font-weight:700;}'
+                ].join('\n');
+                document.head.appendChild(style);
+              }
 
-              if(document.getElementById('hermes-mobile-power')) return;
-              var b=document.createElement('a');
-              b.id='hermes-mobile-power';
-              b.href='hermes://menu';
-              b.setAttribute('aria-label','Power');
-              b.setAttribute('title','Power');
-              b.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>';
-              var z=document.createElement('a');
-              z.id='hermes-mobile-textsize';
-              z.href='hermes://textsize';
-              z.setAttribute('aria-label','Text Size');
-              z.setAttribute('title','Text Size');
-              z.textContent='A';
+              if(!document.getElementById('hermes-mobile-power')){
+                var b=document.createElement('a');
+                b.id='hermes-mobile-power';
+                b.href='hermes://menu';
+                b.setAttribute('aria-label','Power');
+                b.setAttribute('title','Power');
+                b.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>';
+                var z=document.createElement('a');
+                z.id='hermes-mobile-textsize';
+                z.href='hermes://textsize';
+                z.setAttribute('aria-label','Text Size');
+                z.setAttribute('title','Text Size');
+                z.textContent='A';
+                var d=document.createElement('a');
+                d.id='hermes-mobile-connector';
+                d.href='hermes://connector';
+                d.setAttribute('aria-label','Connector State');
+                d.setAttribute('title','Connector State');
+                d.textContent='●';
 
-              var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
-              var brandText=null;
-              while(walker.nextNode()){
-                var t=(walker.currentNode.nodeValue||'').replace(/\s+/g,' ').trim().toUpperCase();
-                if(t.indexOf('HERMES')!==-1 && t.indexOf('AGENT')!==-1){
-                  brandText=walker.currentNode.parentElement;
-                  break;
+                var walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
+                var brandText=null;
+                while(walker.nextNode()){
+                  var t=(walker.currentNode.nodeValue||'').replace(/\s+/g,' ').trim().toUpperCase();
+                  if(t.indexOf('HERMES')!==-1 && t.indexOf('AGENT')!==-1){
+                    brandText=walker.currentNode.parentElement;
+                    break;
+                  }
+                }
+                var host=brandText;
+                while(host && host!==document.body){
+                  var r=host.getBoundingClientRect();
+                  if(r.width>60 && r.height>20) break;
+                  host=host.parentElement;
+                }
+                if(host && host!==document.body){
+                  host.style.display='flex';
+                  host.style.alignItems='center';
+                  host.style.justifyContent='space-between';
+                  host.style.gap='10px';
+                  var controls=document.createElement('div');
+                  controls.style.display='inline-flex';
+                  controls.style.gap='8px';
+                  controls.appendChild(d);
+                  controls.appendChild(z);
+                  controls.appendChild(b);
+                  host.appendChild(controls);
+                }else{
+                  d.style.position='fixed';
+                  d.style.top='12px';
+                  d.style.left='12px';
+                  d.style.zIndex='99999';
+                  z.style.position='fixed';
+                  z.style.top='12px';
+                  z.style.left='54px';
+                  z.style.zIndex='99999';
+                  b.style.position='fixed';
+                  b.style.top='12px';
+                  b.style.left='96px';
+                  b.style.zIndex='99999';
+                  document.body.appendChild(d);
+                  document.body.appendChild(z);
+                  document.body.appendChild(b);
                 }
               }
-              var host=brandText;
-              while(host && host!==document.body){
-                var r=host.getBoundingClientRect();
-                if(r.width>60 && r.height>20) break;
-                host=host.parentElement;
+
+              if(!document.getElementById('hermes-mobile-dead-session')){
+                var dead=document.createElement('div');
+                dead.id='hermes-mobile-dead-session';
+                dead.innerHTML='<div><strong>TUI session ended</strong><span>Open a fresh Hermes terminal and resume there.</span></div><a href="hermes://reloadtui">Open fresh TUI</a>';
+                document.body.appendChild(dead);
               }
-              if(host && host!==document.body){
-                host.style.display='flex';
-                host.style.alignItems='center';
-                host.style.justifyContent='space-between';
-                host.style.gap='10px';
-                var controls=document.createElement('div');
-                controls.style.display='inline-flex';
-                controls.style.gap='8px';
-                controls.appendChild(z);
-                controls.appendChild(b);
-                host.appendChild(controls);
-              }else{
-                b.style.position='fixed';
-                b.style.top='12px';
-                b.style.left='12px';
-                b.style.zIndex='99999';
-                z.style.position='fixed';
-                z.style.top='12px';
-                z.style.left='54px';
-                z.style.zIndex='99999';
-                document.body.appendChild(z);
-                document.body.appendChild(b);
+              if(!window.__HermesMobileDeadSessionWatch){
+                window.__HermesMobileDeadSessionWatch=true;
+                var checkDead=function(){
+                  var dead=document.getElementById('hermes-mobile-dead-session');
+                  if(!dead) return;
+                  var text=(document.body&&document.body.innerText||'').toLowerCase();
+                  var ended=text.indexOf('[session ended]')!==-1
+                    || text.indexOf('gateway exited')!==-1
+                    || text.indexOf('chat unavailable')!==-1;
+                  dead.classList.toggle('is-visible', ended);
+                };
+                setInterval(checkDead,1500);
+                new MutationObserver(checkDead).observe(document.body,{childList:true,subtree:true,characterData:true});
+                setTimeout(checkDead,300);
               }
             })();
             """.trimIndent(),
