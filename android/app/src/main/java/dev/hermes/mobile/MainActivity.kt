@@ -1217,6 +1217,16 @@ class MainActivity : ComponentActivity() {
         view.evaluateJavascript(
             """
             (function(){
+              if(!document.getElementById('hermes-terminal-touch-wheel-style')){
+                var style=document.createElement('style');
+                style.id='hermes-terminal-touch-wheel-style';
+                style.textContent=[
+                  '.xterm,.xterm *,.xterm-viewport,.xterm-scrollable-element{touch-action:none!important;-webkit-overflow-scrolling:auto!important;overscroll-behavior:contain!important;}',
+                  '.xterm:has(.xterm-viewport),.xterm:has(.xterm-scrollable-element){touch-action:none!important;overscroll-behavior:contain!important;}'
+                ].join('\n');
+                document.head.appendChild(style);
+              }
+
               if(window.__HermesTerminalTouchWheelBridge) {
                 window.__HermesTerminalTouchWheelBridge.install();
                 return;
@@ -1224,14 +1234,6 @@ class MainActivity : ComponentActivity() {
 
               function xtermElements(){
                 return Array.prototype.slice.call(document.querySelectorAll('.xterm, .xterm-viewport, .xterm-scrollable-element'));
-              }
-
-              function applyTouchStyles(){
-                xtermElements().forEach(function(el){
-                  el.style.touchAction='none';
-                  el.style.webkitOverflowScrolling='auto';
-                  el.style.overscrollBehavior='contain';
-                });
               }
 
               function installOn(host){
@@ -1252,6 +1254,9 @@ class MainActivity : ComponentActivity() {
 
                 host.addEventListener('touchstart',function(event){
                   if(!event.touches || event.touches.length < 1) return;
+                  if(event.target && event.target.closest && event.target.closest('.xterm')){
+                    event.stopPropagation();
+                  }
                   lastX=event.touches[0].clientX;
                   lastY=event.touches[0].clientY;
                 },{passive:true});
@@ -1264,6 +1269,7 @@ class MainActivity : ComponentActivity() {
                   lastX=touch.clientX;
                   lastY=touch.clientY;
                   event.preventDefault();
+                  event.stopPropagation();
                   var target=wheelTarget();
                   var wheel=new WheelEvent('wheel',{
                     deltaX:deltaX,
@@ -1285,7 +1291,6 @@ class MainActivity : ComponentActivity() {
               }
 
               function install(){
-                applyTouchStyles();
                 xtermElements().forEach(installOn);
               }
 
