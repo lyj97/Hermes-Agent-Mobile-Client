@@ -151,6 +151,7 @@ class MainActivity : ComponentActivity() {
                     if (url.startsWith("http://") || url.startsWith("https://")) {
                         injectMobileChrome(view)
                         injectMobileInputBridge(view)
+                        injectTerminalTouchWheelBridge(view)
                         triggerTerminalRelayout(view)
                         mainHandler.postDelayed({ sampleWebViewTopColor() }, 500L)
                         startColorSampling()
@@ -1209,6 +1210,95 @@ class MainActivity : ComponentActivity() {
                 null,
             )
         }, 260)
+    }
+
+    private fun injectTerminalTouchWheelBridge(view: WebView) {
+        if (showingConnectionHub) return
+        view.evaluateJavascript(
+            """
+            (function(){
+              if(window.__HermesTerminalTouchWheelBridge) {
+                window.__HermesTerminalTouchWheelBridge.install();
+                return;
+              }
+
+              function xtermElements(){
+                return Array.prototype.slice.call(document.querySelectorAll('.xterm, .xterm-viewport, .xterm-scrollable-element'));
+              }
+
+              function applyTouchStyles(){
+                xtermElements().forEach(function(el){
+                  el.style.touchAction='none';
+                  el.style.webkitOverflowScrolling='auto';
+                  el.style.overscrollBehavior='contain';
+                });
+              }
+
+              function installOn(host){
+                if(!host || host.__hermesTouchWheelBridgeInstalled) return;
+                host.__hermesTouchWheelBridgeInstalled=true;
+                host.setAttribute('data-hermes-touch-wheel-bridge','true');
+
+                var lastX=null;
+                var lastY=null;
+
+                function wheelTarget(){
+                  var terminal = host.closest && host.closest('.xterm');
+                  var scope = terminal || host;
+                  return scope.querySelector && scope.querySelector('.xterm-scrollable-element')
+                    || document.querySelector('.xterm-scrollable-element')
+                    || host;
+                }
+
+                host.addEventListener('touchstart',function(event){
+                  if(!event.touches || event.touches.length < 1) return;
+                  lastX=event.touches[0].clientX;
+                  lastY=event.touches[0].clientY;
+                },{passive:true});
+
+                host.addEventListener('touchmove',function(event){
+                  if(!event.touches || event.touches.length < 1 || lastX === null || lastY === null) return;
+                  var touch=event.touches[0];
+                  var deltaX=lastX - touch.clientX;
+                  var deltaY=lastY - touch.clientY;
+                  lastX=touch.clientX;
+                  lastY=touch.clientY;
+                  event.preventDefault();
+                  var target=wheelTarget();
+                  var wheel=new WheelEvent('wheel',{
+                    deltaX:deltaX,
+                    deltaY:deltaY,
+                    deltaMode:WheelEvent.DOM_DELTA_PIXEL,
+                    bubbles:true,
+                    cancelable:true
+                  });
+                  target.dispatchEvent(wheel);
+                },{passive:false});
+
+                function reset(){
+                  lastX=null;
+                  lastY=null;
+                }
+
+                host.addEventListener('touchend',reset,{passive:true});
+                host.addEventListener('touchcancel',reset,{passive:true});
+              }
+
+              function install(){
+                applyTouchStyles();
+                xtermElements().forEach(installOn);
+              }
+
+              window.__HermesTerminalTouchWheelBridge={install:install};
+              install();
+
+              if(document.body){
+                new MutationObserver(install).observe(document.body,{childList:true,subtree:true});
+              }
+            })();
+            """.trimIndent(),
+            null,
+        )
     }
 
     private fun injectMobileInputBridge(view: WebView) {
