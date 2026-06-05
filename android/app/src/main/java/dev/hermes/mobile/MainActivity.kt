@@ -1,18 +1,29 @@
 package dev.hermes.mobile
 
 import android.annotation.SuppressLint
+import android.animation.ArgbEvaluator
+import android.animation.ValueAnimator
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
+import android.util.TypedValue
+import android.view.PixelCopy
+import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
 import android.widget.SeekBar
 import android.widget.ScrollView
@@ -31,6 +42,9 @@ import android.net.nsd.NsdServiceInfo
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsAnimationCompat
+import androidx.core.view.WindowInsetsCompat
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -41,6 +55,7 @@ import java.net.HttpURLConnection
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URL
+import androidx.core.view.WindowCompat
 import java.util.Collections
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -49,6 +64,7 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val LOG_TAG = "HermesWebView"
+private const val HERMES_STATUS_BAR_COLOR = "#031615"
 private const val PREFS_NAME = "hermes_mobile_client"
 private const val PREF_LAST_DASHBOARD_BASE = "last_dashboard_base"
 private const val PREF_TEXT_ZOOM = "text_zoom"
@@ -57,14 +73,29 @@ private const val DEFAULT_TEXT_ZOOM = 90
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: HermesWebView
+    private lateinit var statusBarView: View
+    private lateinit var quickKeysBar: HorizontalScrollView
+    private lateinit var root: LinearLayout
     private val mainHandler = Handler(Looper.getMainLooper())
     private val startupExecutor = Executors.newSingleThreadExecutor()
     private val attemptedBases = CopyOnWriteArrayList<String>()
     private var showingConnectionHub = false
+    private var statusBarColor = Color.parseColor(HERMES_STATUS_BAR_COLOR)
+    private var statusBarColorAnimator: ValueAnimator? = null
+    private var colorSamplingEnabled = false
+    private var colorSamplingInFlight = false
+    private val sampleTopColorRunnable = object : Runnable {
+        override fun run() {
+            sampleWebViewTopColor()
+            if (colorSamplingEnabled) mainHandler.postDelayed(this, 1200L)
+        }
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = android.graphics.Color.TRANSPARENT
         WebView.setWebContentsDebuggingEnabled(false)
         CookieManager.getInstance().setAcceptCookie(true)
 
@@ -121,6 +152,11 @@ class MainActivity : ComponentActivity() {
                         injectMobileChrome(view)
                         injectMobileInputBridge(view)
                         triggerTerminalRelayout(view)
+                        mainHandler.postDelayed({ sampleWebViewTopColor() }, 500L)
+                        startColorSampling()
+                    } else {
+                        stopColorSampling()
+                        animateStatusBarColor(Color.parseColor(HERMES_STATUS_BAR_COLOR))
                     }
                 }
 
@@ -157,7 +193,45 @@ class MainActivity : ComponentActivity() {
 
         }
 
-        setContentView(webView)
+        root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+        statusBarView = View(this).apply {
+            setBackgroundColor(statusBarColor)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+            )
+        }
+        webView.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+        quickKeysBar = createQuickKeysBar()
+        root.addView(statusBarView)
+        root.addView(webView)
+        root.addView(quickKeysBar)
+        ViewCompat.setOnApplyWindowInsetsListener(root) { _, insets ->
+            val h = insets.getInsets(WindowInsetsCompat.Type.statusBars()).top
+            val imeHeight = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+            statusBarView.layoutParams = statusBarView.layoutParams.apply { height = h }
+            updateImeLayout(imeHeight)
+            insets
+        }
+        ViewCompat.setWindowInsetsAnimationCallback(
+            root,
+            object : WindowInsetsAnimationCompat.Callback(
+                WindowInsetsAnimationCompat.Callback.DISPATCH_MODE_STOP,
+            ) {
+                override fun onProgress(
+                    insets: WindowInsetsCompat,
+                    runningAnimations: List<WindowInsetsAnimationCompat>,
+                ): WindowInsetsCompat {
+                    val imeHeight = insets.getInsets(WindowInsetsCompat.Type.ime()).bottom
+                    updateImeLayout(imeHeight)
+                    return insets
+                }
+            },
+        )
+        setContentView(root)
+        ViewCompat.requestApplyInsets(root)
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -186,7 +260,170 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun updateImeLayout(imeHeight: Int) {
+        if (imeHeight > 0) {
+            quickKeysBar.visibility = View.VISIBLE
+            root.setPadding(0, 0, 0, imeHeight)
+            webView.setPadding(0, 0, 0, 0)
+        } else {
+            quickKeysBar.visibility = View.GONE
+            root.setPadding(0, 0, 0, 0)
+            webView.setPadding(0, 0, 0, 0)
+        }
+    }
+
+    private fun createQuickKeysBar(): HorizontalScrollView {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(dp(8), 0, dp(8), 0)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            )
+        }
+        val buttons = listOf(
+            QuickKey("Tab") { webView.mobileInputSink?.sendText("\t") },
+            QuickKey("Ctrl+C") { dispatchCtrlCToTerminal() },
+            QuickKey("Esc") { dispatchEscToTerminal() },
+            QuickKey("↑") { webView.mobileInputSink?.sendKey("up") },
+            QuickKey("↓") { webView.mobileInputSink?.sendKey("down") },
+            QuickKey("←") { webView.mobileInputSink?.sendKey("left") },
+            QuickKey("→") { webView.mobileInputSink?.sendKey("right") },
+            QuickKey("/") { webView.mobileInputSink?.sendText("/") },
+            QuickKey("-") { webView.mobileInputSink?.sendText("-") },
+            QuickKey("~") { webView.mobileInputSink?.sendText("~") },
+            QuickKey("|") { webView.mobileInputSink?.sendText("|") },
+            QuickKey(":") { webView.mobileInputSink?.sendText(":") },
+        )
+        buttons.forEach { key -> container.addView(createQuickKeyButton(key)) }
+
+        return HorizontalScrollView(this).apply {
+            visibility = View.GONE
+            isHorizontalScrollBarEnabled = false
+            setBackgroundColor(Color.parseColor("#061816"))
+            overScrollMode = View.OVER_SCROLL_NEVER
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(44),
+            )
+            addView(container)
+        }
+    }
+
+    private fun createQuickKeyButton(key: QuickKey): TextView {
+        return TextView(this).apply {
+            text = key.label
+            setTextColor(Color.parseColor("#ffe6cb"))
+            typeface = Typeface.MONOSPACE
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            gravity = android.view.Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            minHeight = dp(44)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = quickKeyBackground()
+            setOnClickListener {
+                webView.requestFocus()
+                key.action()
+            }
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.MATCH_PARENT,
+            ).apply {
+                marginEnd = dp(4)
+            }
+        }
+    }
+
+    private fun quickKeyBackground(): StateListDrawable {
+        fun shape(color: String) = GradientDrawable().apply {
+            setColor(Color.parseColor(color))
+        }
+        return StateListDrawable().apply {
+            addState(intArrayOf(android.R.attr.state_pressed), shape("#173a34"))
+            addState(intArrayOf(android.R.attr.state_focused), shape("#173a34"))
+            addState(intArrayOf(), shape("#0d2420"))
+        }
+    }
+
+    private fun dispatchCtrlCToTerminal() {
+        val js = """(function(){ var t=document.querySelector('.xterm-helper-textarea')||document.querySelector('.xterm');if(t){t.dispatchEvent(new KeyboardEvent('keydown',{key:'c',code:'KeyC',keyCode:67,ctrlKey:true,bubbles:true,cancelable:true}));t.dispatchEvent(new KeyboardEvent('keyup',{key:'c',code:'KeyC',keyCode:67,ctrlKey:true,bubbles:true,cancelable:true}));}})();"""
+        webView.evaluateJavascript(js, null)
+    }
+
+    private fun dispatchEscToTerminal() {
+        val js = """(function(){ var t=document.querySelector('.xterm-helper-textarea')||document.querySelector('.xterm');if(t){t.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',code:'Escape',keyCode:27,bubbles:true,cancelable:true}));t.dispatchEvent(new KeyboardEvent('keyup',{key:'Escape',code:'Escape',keyCode:27,bubbles:true,cancelable:true}));}})();"""
+        webView.evaluateJavascript(js, null)
+    }
+
+    private fun dp(value: Int): Int {
+        return (value * resources.displayMetrics.density).toInt()
+    }
+
+    private data class QuickKey(val label: String, val action: () -> Unit)
+
+    private fun startColorSampling() {
+        colorSamplingEnabled = true
+        mainHandler.removeCallbacks(sampleTopColorRunnable)
+        mainHandler.postDelayed(sampleTopColorRunnable, 300L)
+    }
+
+    private fun stopColorSampling() {
+        colorSamplingEnabled = false
+        mainHandler.removeCallbacks(sampleTopColorRunnable)
+    }
+
+    private fun sampleWebViewTopColor() {
+        if (colorSamplingInFlight) return
+        if (webView.width <= 0 || webView.height <= 0 || !webView.isShown) return
+        val sampleRows = 8.coerceAtMost(webView.height)
+        val location = IntArray(2)
+        webView.getLocationInWindow(location)
+        val srcRect = Rect(location[0], location[1], location[0] + webView.width, location[1] + sampleRows)
+        val bitmap = Bitmap.createBitmap(webView.width, sampleRows, Bitmap.Config.ARGB_8888)
+        colorSamplingInFlight = true
+        PixelCopy.request(window, srcRect, bitmap, { result ->
+            colorSamplingInFlight = false
+            if (result == PixelCopy.SUCCESS) {
+                val color = averageTopColor(bitmap, sampleRows)
+                animateStatusBarColor(color)
+            }
+            bitmap.recycle()
+        }, mainHandler)
+    }
+
+    private fun averageTopColor(bitmap: Bitmap, rows: Int): Int {
+        val width = bitmap.width
+        val height = rows.coerceAtMost(bitmap.height)
+        var r = 0L; var g = 0L; var b = 0L; var count = 0L
+        for (y in 0 until height) {
+            for (x in 0 until width) {
+                val color = bitmap.getPixel(x, y)
+                if (Color.alpha(color) == 0) continue
+                r += Color.red(color); g += Color.green(color); b += Color.blue(color); count++
+            }
+        }
+        if (count == 0L) return statusBarColor
+        return Color.rgb((r / count).toInt(), (g / count).toInt(), (b / count).toInt())
+    }
+
+    private fun animateStatusBarColor(nextColor: Int) {
+        if (nextColor == statusBarColor) return
+        statusBarColorAnimator?.cancel()
+        statusBarColorAnimator = ValueAnimator.ofObject(ArgbEvaluator(), statusBarColor, nextColor).apply {
+            duration = 200L
+            addUpdateListener { animator ->
+                val color = animator.animatedValue as Int
+                statusBarView.setBackgroundColor(color)
+                statusBarColor = color
+            }
+            start()
+        }
+    }
+
     override fun onDestroy() {
+        statusBarColorAnimator?.cancel()
+        stopColorSampling()
         startupExecutor.shutdownNow()
         webView.destroy()
         super.onDestroy()
@@ -228,7 +465,7 @@ class MainActivity : ComponentActivity() {
                   linear-gradient(rgba(255,255,255,.035) 1px,transparent 1px),
                   linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px);
                   background-size:26px 26px;mask-image:linear-gradient(#000,transparent 82%)}
-                .wrap{padding:32px 22px 28px;max-width:720px;margin:0 auto}
+                .wrap{padding:max(32px,calc(env(safe-area-inset-top,0px) + 16px)) 22px 28px;max-width:720px;margin:0 auto}
                 .top{display:flex;align-items:center;justify-content:space-between;margin-bottom:34px}
                 .brand{font-size:13px;color:var(--gold);letter-spacing:.42em;text-transform:uppercase}
                 .mark{width:42px;height:42px;border:1px solid rgba(245,200,76,.55);border-radius:999px;display:grid;place-items:center;color:var(--gold);background:rgba(8,31,28,.72);box-shadow:0 0 42px rgba(245,200,76,.12)}
@@ -872,15 +1109,15 @@ class MainActivity : ComponentActivity() {
                   host.appendChild(controls);
                 }else{
                   d.style.position='fixed';
-                  d.style.top='12px';
+                  d.style.top='max(12px, calc(env(safe-area-inset-top, 0px) + 8px))';
                   d.style.left='12px';
                   d.style.zIndex='99999';
                   z.style.position='fixed';
-                  z.style.top='12px';
+                  z.style.top='max(12px, calc(env(safe-area-inset-top, 0px) + 8px))';
                   z.style.left='54px';
                   z.style.zIndex='99999';
                   b.style.position='fixed';
-                  b.style.top='12px';
+                  b.style.top='max(12px, calc(env(safe-area-inset-top, 0px) + 8px))';
                   b.style.left='96px';
                   b.style.zIndex='99999';
                   document.body.appendChild(d);
@@ -910,6 +1147,7 @@ class MainActivity : ComponentActivity() {
                 new MutationObserver(checkDead).observe(document.body,{childList:true,subtree:true,characterData:true});
                 setTimeout(checkDead,300);
               }
+
             })();
             """.trimIndent(),
             null,
