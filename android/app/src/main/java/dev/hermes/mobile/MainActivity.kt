@@ -1217,13 +1217,14 @@ class MainActivity : ComponentActivity() {
         view.evaluateJavascript(
             """
             (function(){
+              // --- CSS: lock touch ownership to xterm region only ---
               if(!document.getElementById('hermes-terminal-touch-wheel-style')){
                 var style=document.createElement('style');
                 style.id='hermes-terminal-touch-wheel-style';
-                style.textContent=[
-                  '.xterm,.xterm *,.xterm-viewport,.xterm-scrollable-element{touch-action:none!important;-webkit-overflow-scrolling:auto!important;overscroll-behavior:contain!important;}',
-                  '.xterm:has(.xterm-viewport),.xterm:has(.xterm-scrollable-element){touch-action:none!important;overscroll-behavior:contain!important;}'
-                ].join('\n');
+                // touch-action:none on .xterm subtree prevents the browser from starting
+                // a native scroll gesture when the finger is inside the terminal.
+                // Only the .xterm root and its children — NOT the whole page.
+                style.textContent='.xterm,.xterm *{touch-action:none!important;overscroll-behavior:contain!important;}';
                 document.head.appendChild(style);
               }
 
@@ -1232,34 +1233,61 @@ class MainActivity : ComponentActivity() {
                 return;
               }
 
-              function xtermElements(){
-                return Array.prototype.slice.call(document.querySelectorAll('.xterm, .xterm-viewport, .xterm-scrollable-element'));
+              // Only install on .xterm root elements — NOT on .xterm-viewport or
+              // .xterm-scrollable-element. Installing on children causes duplicate
+              // events: one touchmove fires per installed element AND the synthetic
+              // WheelEvent bubbles through all of them.
+              function xtermRoots(){
+                return Array.prototype.slice.call(document.querySelectorAll('.xterm'));
               }
 
               function installOn(host){
                 if(!host || host.__hermesTouchWheelBridgeInstalled) return;
+                // Guard: only install on actual .xterm root (not nested xterm classes)
+                if(!host.classList.contains('xterm')) return;
                 host.__hermesTouchWheelBridgeInstalled=true;
-                host.setAttribute('data-hermes-touch-wheel-bridge','true');
 
                 var lastX=null;
                 var lastY=null;
 
+                // CRITICAL: dispatch to host (.xterm), NOT to .xterm-scrollable-element.
+                //
+                // xterm 6.x DOM hierarchy:
+                //   .xterm  (CoreBrowserTerminal.element)
+                //     └── .xterm-scrollable-element  (SmoothScrollableElement._domNode)
+                //           └── .xterm-screen
+                //
+                // Two independent wheel listeners exist:
+                //   A) SmoothScrollableElement on .xterm-scrollable-element {passive:false}
+                //      -> calls _onMouseWheel -> setScrollPosition (pixel scroll)
+                //      -> checks e.browserEvent.defaultPrevented — SKIPS if true
+                //   B) CoreBrowserTerminal on .xterm {passive:false}
+                //      -> calls attachCustomWheelEventHandler (ChatPage handler)
+                //      -> ChatPage calls term.scrollLines(step) + ev.preventDefault()
+                //
+                // Dispatch order when target = .xterm-scrollable-element:
+                //   A fires first (on target) -> scrolls by raw pixel delta
+                //   B fires second (bubble) -> ChatPage handler fires AGAIN -> double scroll
+                //
+                // Dispatch order when target = .xterm:
+                //   B fires first (on target) -> ChatPage handler: term.scrollLines + ev.preventDefault()
+                //   A fires second (bubble) -> sees defaultPrevented=true -> SKIPS (returns early)
+                //
+                // Result: single scroll, driven by ChatPage's line-step logic.
                 function wheelTarget(){
-                  var terminal = host.closest && host.closest('.xterm');
-                  var scope = terminal || host;
-                  return scope.querySelector && scope.querySelector('.xterm-scrollable-element')
-                    || document.querySelector('.xterm-scrollable-element')
-                    || host;
+                  return host; // .xterm — NOT .xterm-scrollable-element
                 }
 
+                // touchstart: passive:false so we can preventDefault if needed.
+                // preventDefault here stops browser from "locking in" a scroll direction
+                // before touchmove fires (important on some Android versions).
                 host.addEventListener('touchstart',function(event){
                   if(!event.touches || event.touches.length < 1) return;
-                  if(event.target && event.target.closest && event.target.closest('.xterm')){
-                    event.stopPropagation();
-                  }
                   lastX=event.touches[0].clientX;
                   lastY=event.touches[0].clientY;
-                },{passive:true});
+                  // Don't preventDefault on touchstart — it breaks tap-to-focus on xterm.
+                  event.stopPropagation();
+                },{passive:false});
 
                 host.addEventListener('touchmove',function(event){
                   if(!event.touches || event.touches.length < 1 || lastX === null || lastY === null) return;
@@ -1268,9 +1296,10 @@ class MainActivity : ComponentActivity() {
                   var deltaY=lastY - touch.clientY;
                   lastX=touch.clientX;
                   lastY=touch.clientY;
+                  // Prevent native scroll AND stop propagation so parent overflows
+                  // (html/body with overflow-y:auto on mobile) don't scroll.
                   event.preventDefault();
                   event.stopPropagation();
-                  var target=wheelTarget();
                   var wheel=new WheelEvent('wheel',{
                     deltaX:deltaX,
                     deltaY:deltaY,
@@ -1278,7 +1307,9 @@ class MainActivity : ComponentActivity() {
                     bubbles:true,
                     cancelable:true
                   });
-                  target.dispatchEvent(wheel);
+                  // Dispatch to .xterm so ChatPage's customWheelEventHandler runs first,
+                  // calls ev.preventDefault(), then scrollableElement's listener skips.
+                  wheelTarget().dispatchEvent(wheel);
                 },{passive:false});
 
                 function reset(){
@@ -1291,7 +1322,7 @@ class MainActivity : ComponentActivity() {
               }
 
               function install(){
-                xtermElements().forEach(installOn);
+                xtermRoots().forEach(installOn);
               }
 
               window.__HermesTerminalTouchWheelBridge={install:install};
