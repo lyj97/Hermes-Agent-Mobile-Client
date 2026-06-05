@@ -1264,8 +1264,8 @@ class MainActivity : ComponentActivity() {
                 host.addEventListener('touchmove',function(event){
                   if(!event.touches || event.touches.length < 1 || lastX === null || lastY === null) return;
                   var touch=event.touches[0];
-                  var deltaX=touch.clientX - lastX;
-                  var deltaY=touch.clientY - lastY;
+                  var deltaX=lastX - touch.clientX;
+                  var deltaY=lastY - touch.clientY;
                   lastX=touch.clientX;
                   lastY=touch.clientY;
                   event.preventDefault();
@@ -1393,93 +1393,6 @@ class MainActivity : ComponentActivity() {
                 if(target.value !== undefined) target.value = '';
                 return true;
               }
-
-              function dispatchWheel(target,deltaY){
-                if(!target) return false;
-                var ev;
-                try {
-                  ev = new WheelEvent('wheel',{
-                    deltaY:deltaY,
-                    wheelDelta:-deltaY,
-                    bubbles:true,
-                    cancelable:true,
-                    composed:true
-                  });
-                } catch (_) {
-                  ev = document.createEvent('WheelEvent');
-                  ev.initEvent('wheel',true,true);
-                  ev.deltaY = deltaY;
-                  ev.wheelDelta = -deltaY;
-                }
-                target.dispatchEvent(ev);
-                return true;
-              }
-
-              function dispatchShiftScroll(target,deltaY){
-                if(!target) return false;
-                var down = deltaY > 0;
-                var key = down ? 'ArrowDown' : 'ArrowUp';
-                var code = down ? 'ArrowDown' : 'ArrowUp';
-                var keyCode = down ? 40 : 38;
-                var steps = Math.max(1, Math.min(8, Math.round(Math.abs(deltaY) / 24)));
-                for(var i=0;i<steps;i++){
-                  keyEvent(target,'keydown',key,code,keyCode,{shiftKey:true});
-                  keyEvent(target,'keyup',key,code,keyCode,{shiftKey:true});
-                }
-                return true;
-              }
-
-              function scrollTerminal(deltaY){
-                var targets=[
-                  document.querySelector('.xterm-helper-textarea'),
-                  document.querySelector('.xterm-screen'),
-                  document.querySelector('.xterm-viewport'),
-                  document.querySelector('.xterm')
-                ].filter(Boolean);
-                if(targets.length === 0) return false;
-                targets.forEach(function(target){ dispatchWheel(target, deltaY); });
-                dispatchShiftScroll(targets[0], deltaY);
-                return true;
-              }
-
-              function installTerminalTouchScroll(){
-                var root = document.querySelector('.xterm');
-                if(!root || root.__hermesMobileTouchScrollBound) return !!root;
-                root.__hermesMobileTouchScrollBound = true;
-                var lastY = null;
-                var debt = 0;
-                root.addEventListener('touchstart', function(e){
-                  if(!e.touches || e.touches.length !== 1) return;
-                  lastY = e.touches[0].clientY;
-                  debt = 0;
-                }, {passive:true});
-                root.addEventListener('touchmove', function(e){
-                  if(!e.touches || e.touches.length !== 1 || lastY === null) return;
-                  var y = e.touches[0].clientY;
-                  debt += (lastY - y);
-                  lastY = y;
-                  if(Math.abs(debt) >= 18){
-                    scrollTerminal(debt);
-                    debt = 0;
-                  }
-                }, {passive:true});
-                root.addEventListener('touchend', function(){ lastY = null; debt = 0; }, {passive:true});
-                root.addEventListener('touchcancel', function(){ lastY = null; debt = 0; }, {passive:true});
-                return true;
-              }
-
-              installTerminalTouchScroll();
-              if(!window.__hermesMobileTerminalScrollObserver){
-                window.__hermesMobileTerminalScrollObserver = new MutationObserver(function(){
-                  installTerminalTouchScroll();
-                });
-                window.__hermesMobileTerminalScrollObserver.observe(document.documentElement, {
-                  childList:true,
-                  subtree:true
-                });
-              }
-              setTimeout(installTerminalTouchScroll, 300);
-              setTimeout(installTerminalTouchScroll, 1000);
 
               window.HermesMobileNativeInput = {
                 text: sendText,
