@@ -1264,8 +1264,8 @@ class MainActivity : ComponentActivity() {
                 host.addEventListener('touchmove',function(event){
                   if(!event.touches || event.touches.length < 1 || lastX === null || lastY === null) return;
                   var touch=event.touches[0];
-                  var deltaX=lastX - touch.clientX;
-                  var deltaY=lastY - touch.clientY;
+                  var deltaX=touch.clientX - lastX;
+                  var deltaY=touch.clientY - lastY;
                   lastX=touch.clientX;
                   lastY=touch.clientY;
                   event.preventDefault();
