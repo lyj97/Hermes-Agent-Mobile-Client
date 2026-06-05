@@ -110,6 +110,20 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // JS→Kotlin bridge: JS notifies us when .xterm-helper-textarea gains/loses
+            // focus so onCreateInputConnection() can route input correctly.
+            addJavascriptInterface(object : Any() {
+                @android.webkit.JavascriptInterface
+                fun setXtermHelperTextareaFocused(focused: Boolean) {
+                    xtermHelperTextareaFocused = focused
+                    mainHandler.post {
+                        val imm = this@MainActivity.getSystemService(INPUT_METHOD_SERVICE)
+                            as? android.view.inputmethod.InputMethodManager
+                        imm?.restartInput(this@MainActivity.webView)
+                    }
+                }
+            }, "HermesFocusBridge")
+
             setBackgroundColor(Color.rgb(4, 28, 28))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -143,6 +157,13 @@ class MainActivity : ComponentActivity() {
                 override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                     val uri = request.url ?: return false
                     return handleInternalUrl(uri.toString())
+                }
+
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    // Reset terminal focus state on navigation so non-xterm pages
+                    // (e.g. login) get the default WebView InputConnection.
+                    webView.xtermHelperTextareaFocused = false
                 }
 
                 override fun onPageFinished(view: WebView, url: String) {
@@ -1849,6 +1870,44 @@ class MainActivity : ComponentActivity() {
                 text: sendText,
                 key: sendKey
               };
+
+              // Focus tracker: tell Kotlin when .xterm-helper-textarea gains/loses focus.
+              // This lets onCreateInputConnection() route input to xterm only when the
+              // terminal is actually focused, and fall back to normal WebView input otherwise.
+              (function installFocusTracker() {
+                if (window.__hermesFocusTrackerInstalled) return;
+                window.__hermesFocusTrackerInstalled = true;
+
+                function notify(focused) {
+                  if (window.HermesFocusBridge && window.HermesFocusBridge.setXtermHelperTextareaFocused) {
+                    window.HermesFocusBridge.setXtermHelperTextareaFocused(focused);
+                  }
+                }
+
+                function isXtermTextarea(el) {
+                  return !!(el && el.classList && el.classList.contains('xterm-helper-textarea'));
+                }
+
+                // Report current focus state immediately on install.
+                notify(isXtermTextarea(document.activeElement));
+
+                document.addEventListener('focusin', function(e) {
+                  notify(isXtermTextarea(e.target));
+                }, true);
+
+                document.addEventListener('focusout', function() {
+                  // Use setTimeout to let the new activeElement settle before reporting.
+                  setTimeout(function() {
+                    notify(isXtermTextarea(document.activeElement));
+                  }, 0);
+                }, true);
+
+                if (document.body) {
+                  new MutationObserver(function() {
+                    notify(isXtermTextarea(document.activeElement));
+                  }).observe(document.body, { childList: true, subtree: true });
+                }
+              })();
             })();
             """.trimIndent(),
             null,
@@ -1884,9 +1943,20 @@ class HermesWebView(context: Context) : WebView(context) {
 
     var mobileInputSink: MobileInputSink? = null
 
+    // Tracks whether the xterm terminal's hidden textarea is currently focused.
+    // Set by HermesFocusBridge JS→Kotlin bridge via setXtermHelperTextareaFocused().
+    // Default false = let WebView handle input natively (login, chat, etc.).
+    @Volatile var xtermHelperTextareaFocused: Boolean = false
+
     override fun onCheckIsTextEditor(): Boolean = true
 
     override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+        // Only hijack input for the xterm terminal when its hidden textarea is focused.
+        // For all other elements (login inputs, chat box, etc.) fall back to the default
+        // WebView InputConnection so the browser handles text entry natively.
+        if (!xtermHelperTextareaFocused) {
+            return super.onCreateInputConnection(outAttrs)
+        }
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
             InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
