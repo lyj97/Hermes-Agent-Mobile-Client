@@ -112,9 +112,21 @@ class MainActivity : ComponentActivity() {
 
             // JS→Kotlin bridge: JS notifies us when .xterm-helper-textarea gains/loses
             // focus so onCreateInputConnection() can route input correctly.
+            //
+            // IMPORTANT: restartInput() is only called when the focused state actually
+            // changes, to prevent crash-inducing rapid-fire calls (e.g. from MutationObserver
+            // or repeated focus events during login/page transitions).
             addJavascriptInterface(object : Any() {
+                // Tracks last notified state so we suppress no-op calls.
+                // Volatile because it is read/written from both the JavaBridge thread
+                // and the main thread.
+                @Volatile private var lastNotifiedFocused: Boolean? = null
+
                 @android.webkit.JavascriptInterface
                 fun setXtermHelperTextareaFocused(focused: Boolean) {
+                    // Suppress calls where the state hasn't actually changed.
+                    if (lastNotifiedFocused == focused) return
+                    lastNotifiedFocused = focused
                     xtermHelperTextareaFocused = focused
                     mainHandler.post {
                         val imm = this@MainActivity.getSystemService(INPUT_METHOD_SERVICE)
@@ -1903,8 +1915,12 @@ class MainActivity : ComponentActivity() {
                 }, true);
 
                 if (document.body) {
+                  // NOTE: MutationObserver intentionally does NOT call notify() here.
+                  // DOM mutations during login / React re-renders would trigger rapid-fire
+                  // restartInput() calls on the Android side, causing an immediate crash.
+                  // Focus state is already tracked accurately by the focusin/focusout listeners.
                   new MutationObserver(function() {
-                    notify(isXtermTextarea(document.activeElement));
+                    // reserved — no IME notify on DOM mutations
                   }).observe(document.body, { childList: true, subtree: true });
                 }
               })();
