@@ -1483,4 +1483,10 @@ class HermesWebView(context: Context) : WebView(context) {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean = super.dispatchTouchEvent(event)
+
+    // All scrollable content inside Hermes WebUI uses internal JS overflow scroll (overflow-y:auto on divs).
+    // WebView's own scroll position is always 0. Making scrollTo/scrollBy no-ops prevents the native
+    // WebView gesture recogniser from producing a competing scroll that fights our JS touch→wheel bridge.
+    override fun scrollTo(x: Int, y: Int) { /* no-op: page scroll is JS-internal */ }
+    override fun scrollBy(x: Int, y: Int) { /* no-op: page scroll is JS-internal */ }
 }
