@@ -1333,8 +1333,18 @@ class MainActivity : ComponentActivity() {
                 host.addEventListener('touchmove',function(event){
                   if(!event.touches || event.touches.length < 1 || lastX === null || lastY === null) return;
                   var touch=event.touches[0];
-                  var deltaX=lastX - touch.clientX;
-                  var deltaY=lastY - touch.clientY;
+                  // delta = finger movement direction.
+                  // .xterm-scrollable-element's _onMouseWheel uses the same sign convention
+                  // as a real mouse wheel: positive deltaY = scroll DOWN (content moves up).
+                  // Finger swipes UP → content should move UP → deltaY must be positive.
+                  // Finger swipes UP → touch.clientY decreases → (lastY - touch.clientY) > 0 ✓
+                  // Finger swipes DOWN → content moves DOWN → deltaY must be negative.
+                  // Finger swipes DOWN → touch.clientY increases → (lastY - touch.clientY) < 0 ✓
+                  // BUT: .xterm-scrollable-element treats positive deltaY as scroll UP visually
+                  // (viewport scrollTop increases = content scrolls up on screen), which is the
+                  // OPPOSITE of the natural swipe expectation. Negate to match natural direction.
+                  var deltaX=touch.clientX - lastX;
+                  var deltaY=touch.clientY - lastY;
                   lastX=touch.clientX;
                   lastY=touch.clientY;
                   // Prevent native scroll AND stop propagation so parent overflows
