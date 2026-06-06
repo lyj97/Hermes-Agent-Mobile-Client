@@ -37,8 +37,6 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
-import android.net.nsd.NsdManager
-import android.net.nsd.NsdServiceInfo
 import android.net.Uri
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
@@ -46,16 +44,10 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsAnimationCompat
 import androidx.core.view.WindowInsetsCompat
 import java.net.HttpURLConnection
-import java.net.Inet4Address
-import java.net.NetworkInterface
 import java.net.URL
 import androidx.core.view.WindowCompat
-import java.util.Collections
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 private const val LOG_TAG = "HermesWebView"
 
@@ -570,13 +562,15 @@ class MainActivity : ComponentActivity() {
         startupExecutor.execute {
             Log.d(LOG_TAG, "bootstrap: start")
             val lastBase = hermesPreferences.getSavedDashboardBase()
-            if (!lastBase.isNullOrBlank() && isHermesDashboardBase(lastBase)) {
+            if (!lastBase.isNullOrBlank() && DashboardDiscoveryService.isHermesDashboardBase(lastBase)) {
                 Log.d(LOG_TAG, "bootstrap: using last base $lastBase")
                 loadDashboardBase(lastBase, persist = false)
                 return@execute
             }
 
-            val discovered = discoverHermesDashboardBases()
+            val discovered = DashboardDiscoveryService.discoverHermesDashboardBases(this) { base ->
+                attemptedBases += base
+            }
             val selected = discovered.firstOrNull()
 
             if (selected != null) {
@@ -592,7 +586,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun loadDashboardBase(base: String, persist: Boolean) {
-        val normalizedBase = normalizeDashboardBase(base)
+        val normalizedBase = DashboardDiscoveryService.normalizeDashboardBase(base)
         if (normalizedBase.isBlank()) {
             renderStatusPage("Connector URL is empty.", attemptedBases.toList())
             renderConnectionHome()
@@ -623,128 +617,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun discoverHermesDashboardBases(): List<String> {
-        val candidates = linkedSetOf<String>()
-
-        discoverViaMdns().forEach { host ->
-            candidates += "http://$host:${HermesConfig.HERMES_DEFAULT_PORT}"
-        }
-        discoverViaLanProbe().forEach { host ->
-            candidates += "http://$host:${HermesConfig.HERMES_DEFAULT_PORT}"
-        }
-
-        val verified = mutableListOf<String>()
-        for (base in candidates) {
-            attemptedBases += base
-            if (isHermesDashboardBase(base)) {
-                verified += base
-            }
-        }
-        Log.d(LOG_TAG, "Discovery verified ${verified.size} Hermes dashboard endpoints")
-        return verified
-    }
-
-    private fun discoverViaMdns(): Set<String> {
-        val nsd = getSystemService(Context.NSD_SERVICE) as? NsdManager ?: return emptySet()
-        val hosts = Collections.synchronizedSet(mutableSetOf<String>())
-        val done = CountDownLatch(1)
-        val resolvePending = Collections.synchronizedList(mutableListOf<CountDownLatch>())
-
-        val listener = object : NsdManager.DiscoveryListener {
-            override fun onDiscoveryStarted(regType: String) {}
-            override fun onServiceLost(service: NsdServiceInfo) {}
-            override fun onDiscoveryStopped(serviceType: String) {
-                done.countDown()
-            }
-            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                done.countDown()
-            }
-            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                done.countDown()
-            }
-            override fun onServiceFound(service: NsdServiceInfo) {
-                val name = service.serviceName.lowercase()
-                if (!name.contains("hermes")) return
-                val wait = CountDownLatch(1)
-                resolvePending += wait
-                nsd.resolveService(service, object : NsdManager.ResolveListener {
-                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
-                        wait.countDown()
-                    }
-                    override fun onServiceResolved(resolved: NsdServiceInfo) {
-                        val host = resolved.host?.hostAddress
-                        if (!host.isNullOrBlank()) hosts += host
-                        wait.countDown()
-                    }
-                })
-            }
-        }
-
-        return try {
-            nsd.discoverServices("_http._tcp.", NsdManager.PROTOCOL_DNS_SD, listener)
-            done.await(3500, TimeUnit.MILLISECONDS)
-            runCatching { nsd.stopServiceDiscovery(listener) }
-            resolvePending.forEach { it.await(1200, TimeUnit.MILLISECONDS) }
-            hosts
-        } catch (_: Exception) {
-            emptySet()
-        }
-    }
-
-    private fun discoverViaLanProbe(): Set<String> {
-        val localIp = localIpv4Address() ?: return emptySet()
-        val parts = localIp.split(".")
-        if (parts.size != 4) return emptySet()
-        val prefix = "${parts[0]}.${parts[1]}.${parts[2]}."
-        val found = Collections.synchronizedSet(mutableSetOf<String>())
-        val pool = Executors.newFixedThreadPool(32)
-        val stop = AtomicBoolean(false)
-        try {
-            for (i in 1..254) {
-                pool.execute {
-                    if (stop.get()) return@execute
-                    val host = "$prefix$i"
-                    if (isHermesDashboardBase("http://$host:${HermesConfig.HERMES_DEFAULT_PORT}")) {
-                        found += host
-                        stop.set(true)
-                    }
-                }
-            }
-            pool.shutdown()
-            val finished = pool.awaitTermination(8, TimeUnit.SECONDS)
-            if (!finished) pool.shutdownNow()
-        } catch (_: Exception) {
-            pool.shutdownNow()
-        }
-        return found
-    }
-
-    private fun isHermesDashboardBase(baseUrl: String): Boolean {
-        val clean = normalizeDashboardBase(baseUrl)
-        if (clean.isBlank()) return false
-        val statusUrl = "$clean${HermesConfig.ENDPOINT_API_STATUS}"
-        return try {
-            Log.d(LOG_TAG, "probe $statusUrl")
-            val conn = (URL(statusUrl).openConnection() as HttpURLConnection).apply {
-                requestMethod = "GET"
-                connectTimeout = HermesConfig.DISCOVERY_CONNECT_TIMEOUT_MS
-                readTimeout = HermesConfig.DISCOVERY_CONNECT_TIMEOUT_MS
-                instanceFollowRedirects = true
-            }
-            val code = conn.responseCode
-            if (code != 200) return false
-            val body = conn.inputStream.bufferedReader().use { it.readText() }
-            body.contains("\"version\"") && body.contains("\"gateway_running\"")
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     private fun renderStatusPage(message: String, attempted: List<String>) {
         val attemptedHtml = if (attempted.isEmpty()) {
             "<li>No endpoints attempted yet.</li>"
         } else {
-            attempted.joinToString("") { "<li>${normalizeDashboardBase(it)}${HermesConfig.ENDPOINT_API_STATUS}</li>" }
+            attempted.joinToString("") { "<li>${DashboardDiscoveryService.normalizeDashboardBase(it)}${HermesConfig.ENDPOINT_API_STATUS}</li>" }
         }
         val html = """
             <html><body style="background:#041c1c;color:#ffe6cb;font-family:monospace;padding:24px;line-height:1.45">
@@ -795,7 +672,7 @@ class MainActivity : ComponentActivity() {
                 .setPositiveButton("Connect") { _, _ ->
                     hideKeyboard(input)
                     val raw = input.text?.toString()?.trim().orEmpty()
-                    val base = normalizeDashboardBase(raw)
+                    val base = DashboardDiscoveryService.normalizeDashboardBase(raw)
                     if (base.isNotBlank()) {
                         attemptedBases += base
                         loadDashboardBase(base, persist = true)
@@ -813,31 +690,6 @@ class MainActivity : ComponentActivity() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(input.windowToken, 0)
         input.clearFocus()
-    }
-
-    private fun normalizeDashboardBase(raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.isBlank()) return ""
-        val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-            trimmed
-        } else {
-            "http://$trimmed"
-        }
-        return try {
-            val url = URL(withScheme)
-            val host = url.host
-            if (host.isNullOrBlank()) return ""
-            val protocol = if (url.protocol.equals("https", ignoreCase = true)) "https" else "http"
-            val port = if (url.port > 0) ":${url.port}" else ""
-            "$protocol://$host$port"
-        } catch (_: Exception) {
-            withScheme
-                .substringBefore("?")
-                .substringBefore("#")
-                .removeSuffix("/")
-                .removeSuffix(HermesConfig.ENDPOINT_CHAT)
-                .removeSuffix("/")
-        }
     }
 
     private fun showVpsScriptDialog() {
@@ -1073,23 +925,4 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun localIpv4Address(): String? {
-        return try {
-            val interfaces = NetworkInterface.getNetworkInterfaces() ?: return null
-            for (iface in interfaces) {
-                if (!iface.isUp || iface.isLoopback) continue
-                val name = iface.name.lowercase()
-                if (!name.startsWith("wlan") && !name.startsWith("eth") && !name.startsWith("en")) continue
-                val addresses = iface.inetAddresses
-                for (addr in addresses) {
-                    if (addr is Inet4Address && !addr.isLoopbackAddress) {
-                        return addr.hostAddress
-                    }
-                }
-            }
-            null
-        } catch (_: Exception) {
-            null
-        }
-    }
 }
