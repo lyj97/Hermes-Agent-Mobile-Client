@@ -1,14 +1,12 @@
 package dev.hermes.mobile
 
 import android.content.Context
-import java.net.URL
-
 class HermesPreferences(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
     fun getSavedDashboardBase(): String? {
         val raw = prefs.getString(PREF_LAST_DASHBOARD_BASE, null) ?: return null
-        val normalized = normalizeDashboardBase(raw)
+        val normalized = DashboardDiscoveryService.normalizeDashboardBase(raw)
         if (normalized.isNotBlank() && normalized != raw) {
             prefs.edit().putString(PREF_LAST_DASHBOARD_BASE, normalized).apply()
         }
@@ -35,31 +33,6 @@ class HermesPreferences(context: Context) {
         prefs.edit()
             .putInt(PREF_TEXT_ZOOM, zoom)
             .apply()
-    }
-
-    private fun normalizeDashboardBase(raw: String): String {
-        val trimmed = raw.trim()
-        if (trimmed.isBlank()) return ""
-        val withScheme = if (trimmed.startsWith("http://", ignoreCase = true) || trimmed.startsWith("https://", ignoreCase = true)) {
-            trimmed
-        } else {
-            "http://$trimmed"
-        }
-        return try {
-            val url = URL(withScheme)
-            val host = url.host
-            if (host.isNullOrBlank()) return ""
-            val protocol = if (url.protocol.equals("https", ignoreCase = true)) "https" else "http"
-            val port = if (url.port > 0) ":${url.port}" else ""
-            "$protocol://$host$port"
-        } catch (_: Exception) {
-            withScheme
-                .substringBefore("?")
-                .substringBefore("#")
-                .removeSuffix("/")
-                .removeSuffix(HermesConfig.ENDPOINT_CHAT)
-                .removeSuffix("/")
-        }
     }
 
     companion object {
