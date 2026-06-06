@@ -276,6 +276,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        webView.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
+    }
+
     private fun updateImeLayout(imeHeight: Int) {
         if (imeHeight > 0) {
             quickKeysBar.visibility = View.VISIBLE
@@ -453,7 +463,12 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         statusBarColorAnimator?.cancel()
         stopColorSampling()
+        mainHandler.removeCallbacksAndMessages(null)
         startupExecutor.shutdownNow()
+        root.removeView(webView)
+        webView.stopLoading()
+        webView.webViewClient = WebViewClient()
+        webView.webChromeClient = null
         webView.destroy()
         super.onDestroy()
     }
@@ -612,8 +627,11 @@ class MainActivity : ComponentActivity() {
                 readTimeout = HermesConfig.WARMUP_TIMEOUT_MS
                 instanceFollowRedirects = true
             }
-            conn.inputStream.use { it.readNBytes(32) }
-            conn.disconnect()
+            try {
+                conn.inputStream.use { it.readNBytes(32) }
+            } finally {
+                conn.disconnect()
+            }
         }
     }
 
@@ -785,13 +803,18 @@ class MainActivity : ComponentActivity() {
                     readTimeout = HermesConfig.READ_TIMEOUT_MS
                     instanceFollowRedirects = true
                 }
-                val code = conn.responseCode
-                val raw = if (code in 200..299) {
-                    conn.inputStream.bufferedReader().use { it.readText() }
-                } else {
-                    conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val code: Int
+                val raw: String
+                try {
+                    code = conn.responseCode
+                    raw = if (code in 200..299) {
+                        conn.inputStream.bufferedReader().use { it.readText() }
+                    } else {
+                        conn.errorStream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                    }
+                } finally {
+                    conn.disconnect()
                 }
-                conn.disconnect()
 
                 val json = runCatching { org.json.JSONObject(raw) }.getOrNull()
                 val version = json?.optString("version")?.takeIf { it.isNotBlank() }
