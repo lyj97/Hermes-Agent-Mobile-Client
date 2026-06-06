@@ -110,6 +110,32 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            // JS→Kotlin bridge: JS notifies us when .xterm-helper-textarea gains/loses
+            // focus so onCreateInputConnection() can route input correctly.
+            //
+            // IMPORTANT: restartInput() is only called when the focused state actually
+            // changes, to prevent crash-inducing rapid-fire calls (e.g. from MutationObserver
+            // or repeated focus events during login/page transitions).
+            addJavascriptInterface(object : Any() {
+                // Tracks last notified state so we suppress no-op calls.
+                // Volatile because it is read/written from both the JavaBridge thread
+                // and the main thread.
+                @Volatile private var lastNotifiedFocused: Boolean? = null
+
+                @android.webkit.JavascriptInterface
+                fun setXtermHelperTextareaFocused(focused: Boolean) {
+                    // Suppress calls where the state hasn't actually changed.
+                    if (lastNotifiedFocused == focused) return
+                    lastNotifiedFocused = focused
+                    xtermHelperTextareaFocused = focused
+                    mainHandler.post {
+                        val imm = this@MainActivity.getSystemService(INPUT_METHOD_SERVICE)
+                            as? android.view.inputmethod.InputMethodManager
+                        imm?.restartInput(this@MainActivity.webView)
+                    }
+                }
+            }, "HermesFocusBridge")
+
             setBackgroundColor(Color.rgb(4, 28, 28))
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -145,12 +171,20 @@ class MainActivity : ComponentActivity() {
                     return handleInternalUrl(uri.toString())
                 }
 
+                override fun onPageStarted(view: WebView, url: String, favicon: android.graphics.Bitmap?) {
+                    super.onPageStarted(view, url, favicon)
+                    // Reset terminal focus state on navigation so non-xterm pages
+                    // (e.g. login) get the default WebView InputConnection.
+                    webView.xtermHelperTextareaFocused = false
+                }
+
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     Log.d(LOG_TAG, "Loaded $url")
                     if (url.startsWith("http://") || url.startsWith("https://")) {
                         injectMobileChrome(view)
                         injectMobileInputBridge(view)
+                        injectTerminalTouchWheelBridge(view)
                         triggerTerminalRelayout(view)
                         mainHandler.postDelayed({ sampleWebViewTopColor() }, 500L)
                         startColorSampling()
@@ -382,14 +416,22 @@ class MainActivity : ComponentActivity() {
         val srcRect = Rect(location[0], location[1], location[0] + webView.width, location[1] + sampleRows)
         val bitmap = Bitmap.createBitmap(webView.width, sampleRows, Bitmap.Config.ARGB_8888)
         colorSamplingInFlight = true
-        PixelCopy.request(window, srcRect, bitmap, { result ->
+        try {
+            PixelCopy.request(window, srcRect, bitmap, { result ->
+                colorSamplingInFlight = false
+                if (result == PixelCopy.SUCCESS) {
+                    val color = averageTopColor(bitmap, sampleRows)
+                    animateStatusBarColor(color)
+                }
+                bitmap.recycle()
+            }, mainHandler)
+        } catch (e: Exception) {
+            // PixelCopy can throw IllegalArgumentException (bad rect) or
+            // IllegalStateException (surface not ready). Swallow silently —
+            // color sampling is best-effort and will retry on the next tick.
             colorSamplingInFlight = false
-            if (result == PixelCopy.SUCCESS) {
-                val color = averageTopColor(bitmap, sampleRows)
-                animateStatusBarColor(color)
-            }
             bitmap.recycle()
-        }, mainHandler)
+        }
     }
 
     private fun averageTopColor(bitmap: Bitmap, rows: Int): Int {
@@ -1211,6 +1253,141 @@ class MainActivity : ComponentActivity() {
         }, 260)
     }
 
+    private fun injectTerminalTouchWheelBridge(view: WebView) {
+        if (showingConnectionHub) return
+        view.evaluateJavascript(
+            """
+            (function(){
+              // --- CSS: lock touch ownership to xterm region only ---
+              if(!document.getElementById('hermes-terminal-touch-wheel-style')){
+                var style=document.createElement('style');
+                style.id='hermes-terminal-touch-wheel-style';
+                // touch-action:none on .xterm subtree prevents the browser from starting
+                // a native scroll gesture when the finger is inside the terminal.
+                // Only the .xterm root and its children — NOT the whole page.
+                style.textContent='.xterm,.xterm *{touch-action:none!important;overscroll-behavior:contain!important;}';
+                document.head.appendChild(style);
+              }
+
+              if(window.__HermesTerminalTouchWheelBridge) {
+                window.__HermesTerminalTouchWheelBridge.install();
+                return;
+              }
+
+              // Only install on .xterm root elements — NOT on .xterm-viewport or
+              // .xterm-scrollable-element. Installing on children causes duplicate
+              // events: one touchmove fires per installed element AND the synthetic
+              // WheelEvent bubbles through all of them.
+              function xtermRoots(){
+                return Array.prototype.slice.call(document.querySelectorAll('.xterm'));
+              }
+
+              function installOn(host){
+                if(!host || host.__hermesTouchWheelBridgeInstalled) return;
+                // Guard: only install on actual .xterm root (not nested xterm classes)
+                if(!host.classList.contains('xterm')) return;
+                host.__hermesTouchWheelBridgeInstalled=true;
+
+                var lastX=null;
+                var lastY=null;
+
+                // DISPATCH TARGET: .xterm-scrollable-element, NOT .xterm
+                //
+                // xterm 6.x DOM hierarchy:
+                //   .xterm  (CoreBrowserTerminal.element)
+                //     └── .xterm-scrollable-element  (SmoothScrollableElement._domNode)
+                //           └── .xterm-screen
+                //
+                // Two independent wheel listeners exist:
+                //   A) SmoothScrollableElement on .xterm-scrollable-element {passive:false}
+                //      -> calls _onMouseWheel -> setScrollPosition (raw PIXEL scroll)
+                //   B) CoreBrowserTerminal on .xterm {passive:false}
+                //      -> ChatPage handler: term.scrollLines(FIXED_STEP) + ev.preventDefault()
+                //         scrollLines() uses a fixed step regardless of deltaY magnitude.
+                //
+                // Problem with dispatching to .xterm (old approach):
+                //   B fires first -> term.scrollLines(fixed step) regardless of finger speed
+                //   -> fast swipe (large deltaY, few events) scrolls LESS than slow swipe
+                //      (small deltaY, many events) — inverted scroll speed.
+                //
+                // Fix: dispatch to .xterm-scrollable-element with bubbles:false
+                //   A fires (on target) -> raw pixel scroll proportional to deltaY
+                //   B never fires (bubbles:false, so event doesn't reach .xterm ancestor)
+                //   -> scroll distance is directly proportional to finger movement speed.
+                function wheelTarget(host){
+                  return host.querySelector('.xterm-scrollable-element') || host;
+                }
+
+                // touchstart: passive:false so we can preventDefault if needed.
+                // preventDefault here stops browser from "locking in" a scroll direction
+                // before touchmove fires (important on some Android versions).
+                host.addEventListener('touchstart',function(event){
+                  if(!event.touches || event.touches.length < 1) return;
+                  lastX=event.touches[0].clientX;
+                  lastY=event.touches[0].clientY;
+                  // Don't preventDefault on touchstart — it breaks tap-to-focus on xterm.
+                  event.stopPropagation();
+                },{passive:false});
+
+                host.addEventListener('touchmove',function(event){
+                  if(!event.touches || event.touches.length < 1 || lastX === null || lastY === null) return;
+                  var touch=event.touches[0];
+                  // delta = finger movement direction.
+                  // .xterm-scrollable-element's _onMouseWheel uses the same sign convention
+                  // as a real mouse wheel: positive deltaY = scroll DOWN (content moves up).
+                  // Finger swipes UP → content should move UP → deltaY must be positive.
+                  // Finger swipes UP → touch.clientY decreases → (lastY - touch.clientY) > 0 ✓
+                  // Finger swipes DOWN → content moves DOWN → deltaY must be negative.
+                  // Finger swipes DOWN → touch.clientY increases → (lastY - touch.clientY) < 0 ✓
+                  // BUT: .xterm-scrollable-element treats positive deltaY as scroll UP visually
+                  // (viewport scrollTop increases = content scrolls up on screen), which is the
+                  // OPPOSITE of the natural swipe expectation. Negate to match natural direction.
+                  var deltaX=touch.clientX - lastX;
+                  var deltaY=touch.clientY - lastY;
+                  lastX=touch.clientX;
+                  lastY=touch.clientY;
+                  // Prevent native scroll AND stop propagation so parent overflows
+                  // (html/body with overflow-y:auto on mobile) don't scroll.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  var wheel=new WheelEvent('wheel',{
+                    deltaX:deltaX,
+                    deltaY:deltaY,
+                    deltaMode:WheelEvent.DOM_DELTA_PIXEL,
+                    bubbles:false,
+                    cancelable:true
+                  });
+                  // Dispatch to .xterm-scrollable-element (pixel-scroll handler).
+                  // bubbles:false prevents the event from reaching CoreBrowserTerminal's
+                  // line-step handler on .xterm, which would override pixel scroll.
+                  wheelTarget(host).dispatchEvent(wheel);
+                },{passive:false});
+
+                function reset(){
+                  lastX=null;
+                  lastY=null;
+                }
+
+                host.addEventListener('touchend',reset,{passive:true});
+                host.addEventListener('touchcancel',reset,{passive:true});
+              }
+
+              function install(){
+                xtermRoots().forEach(installOn);
+              }
+
+              window.__HermesTerminalTouchWheelBridge={install:install};
+              install();
+
+              if(document.body){
+                new MutationObserver(install).observe(document.body,{childList:true,subtree:true});
+              }
+            })();
+            """.trimIndent(),
+            null,
+        )
+    }
+
     private fun injectMobileInputBridge(view: WebView) {
         if (showingConnectionHub) return
         view.evaluateJavascript(
@@ -1299,97 +1476,52 @@ class MainActivity : ComponentActivity() {
                 return true;
               }
 
-              function dispatchWheel(target,deltaY){
-                if(!target) return false;
-                var ev;
-                try {
-                  ev = new WheelEvent('wheel',{
-                    deltaY:deltaY,
-                    wheelDelta:-deltaY,
-                    bubbles:true,
-                    cancelable:true,
-                    composed:true
-                  });
-                } catch (_) {
-                  ev = document.createEvent('WheelEvent');
-                  ev.initEvent('wheel',true,true);
-                  ev.deltaY = deltaY;
-                  ev.wheelDelta = -deltaY;
-                }
-                target.dispatchEvent(ev);
-                return true;
-              }
-
-              function dispatchShiftScroll(target,deltaY){
-                if(!target) return false;
-                var down = deltaY > 0;
-                var key = down ? 'ArrowDown' : 'ArrowUp';
-                var code = down ? 'ArrowDown' : 'ArrowUp';
-                var keyCode = down ? 40 : 38;
-                var steps = Math.max(1, Math.min(8, Math.round(Math.abs(deltaY) / 24)));
-                for(var i=0;i<steps;i++){
-                  keyEvent(target,'keydown',key,code,keyCode,{shiftKey:true});
-                  keyEvent(target,'keyup',key,code,keyCode,{shiftKey:true});
-                }
-                return true;
-              }
-
-              function scrollTerminal(deltaY){
-                var targets=[
-                  document.querySelector('.xterm-helper-textarea'),
-                  document.querySelector('.xterm-screen'),
-                  document.querySelector('.xterm-viewport'),
-                  document.querySelector('.xterm')
-                ].filter(Boolean);
-                if(targets.length === 0) return false;
-                targets.forEach(function(target){ dispatchWheel(target, deltaY); });
-                dispatchShiftScroll(targets[0], deltaY);
-                return true;
-              }
-
-              function installTerminalTouchScroll(){
-                var root = document.querySelector('.xterm');
-                if(!root || root.__hermesMobileTouchScrollBound) return !!root;
-                root.__hermesMobileTouchScrollBound = true;
-                var lastY = null;
-                var debt = 0;
-                root.addEventListener('touchstart', function(e){
-                  if(!e.touches || e.touches.length !== 1) return;
-                  lastY = e.touches[0].clientY;
-                  debt = 0;
-                }, {passive:true});
-                root.addEventListener('touchmove', function(e){
-                  if(!e.touches || e.touches.length !== 1 || lastY === null) return;
-                  var y = e.touches[0].clientY;
-                  debt += (lastY - y);
-                  lastY = y;
-                  if(Math.abs(debt) >= 18){
-                    scrollTerminal(debt);
-                    debt = 0;
-                  }
-                }, {passive:true});
-                root.addEventListener('touchend', function(){ lastY = null; debt = 0; }, {passive:true});
-                root.addEventListener('touchcancel', function(){ lastY = null; debt = 0; }, {passive:true});
-                return true;
-              }
-
-              installTerminalTouchScroll();
-              if(!window.__hermesMobileTerminalScrollObserver){
-                window.__hermesMobileTerminalScrollObserver = new MutationObserver(function(){
-                  installTerminalTouchScroll();
-                });
-                window.__hermesMobileTerminalScrollObserver.observe(document.documentElement, {
-                  childList:true,
-                  subtree:true
-                });
-              }
-              setTimeout(installTerminalTouchScroll, 300);
-              setTimeout(installTerminalTouchScroll, 1000);
-
               window.HermesMobileNativeInput = {
                 text: sendText,
                 key: sendKey
               };
+
+              // Focus tracker: tell Kotlin when .xterm-helper-textarea gains/loses focus.
+              // This lets onCreateInputConnection() route input to xterm only when the
+              // terminal is actually focused, and fall back to normal WebView input otherwise.
+              (function installFocusTracker() {
+                if (window.__hermesFocusTrackerInstalled) return;
+                window.__hermesFocusTrackerInstalled = true;
+
+                function notify(focused) {
+                  if (window.HermesFocusBridge && window.HermesFocusBridge.setXtermHelperTextareaFocused) {
+                    window.HermesFocusBridge.setXtermHelperTextareaFocused(focused);
+                  }
+                }
+
+                function isXtermTextarea(el) {
+                  return !!(el && el.classList && el.classList.contains('xterm-helper-textarea'));
+                }
+
+                // Report current focus state immediately on install.
+                notify(isXtermTextarea(document.activeElement));
+
+                document.addEventListener('focusin', function(e) {
+                  notify(isXtermTextarea(e.target));
+                }, true);
+
+                document.addEventListener('focusout', function() {
+                  // Use setTimeout to let the new activeElement settle before reporting.
+                  setTimeout(function() {
+                    notify(isXtermTextarea(document.activeElement));
+                  }, 0);
+                }, true);
+
+                if (document.body) {
+                  // NOTE: MutationObserver intentionally does NOT call notify() here.
+                  // DOM mutations during login / React re-renders would trigger rapid-fire
+                  // restartInput() calls on the Android side, causing an immediate crash.
+                  // Focus state is already tracked accurately by the focusin/focusout listeners.
+                  new MutationObserver(function() {
+                    // reserved — no IME notify on DOM mutations
+                  }).observe(document.body, { childList: true, subtree: true });
+                }
+              })();
             })();
             """.trimIndent(),
             null,
@@ -1425,9 +1557,28 @@ class HermesWebView(context: Context) : WebView(context) {
 
     var mobileInputSink: MobileInputSink? = null
 
-    override fun onCheckIsTextEditor(): Boolean = true
+    // Tracks whether the xterm terminal's hidden textarea is currently focused.
+    // Set by HermesFocusBridge JS→Kotlin bridge via setXtermHelperTextareaFocused().
+    // Default false = let WebView handle input natively (login, chat, etc.).
+    @Volatile var xtermHelperTextareaFocused: Boolean = false
 
-    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+    // Let WebView's own logic decide whether this view is a text editor when xterm is not
+    // focused. This ensures chat/login inputs get native IME without us interfering.
+    override fun onCheckIsTextEditor(): Boolean =
+        xtermHelperTextareaFocused || super.onCheckIsTextEditor()
+
+    // Return type is nullable: super.onCreateInputConnection() (Java) can return null when
+    // no editable DOM element is focused (e.g. tapping whitespace). Propagating null is
+    // correct — it tells IME there is no active editor, which is the right behavior for
+    // non-input taps. DO NOT replace null with BaseInputConnection: that creates a dead
+    // sink that swallows all keystrokes without delivering them to the browser DOM.
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
+        // Only hijack input for the xterm terminal when its hidden textarea is focused.
+        // For all other elements (login inputs, chat box, etc.) fall back to the default
+        // WebView InputConnection so the browser handles text entry natively.
+        if (!xtermHelperTextareaFocused) {
+            return super.onCreateInputConnection(outAttrs)  // may be null — propagate as-is
+        }
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
             InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
@@ -1475,4 +1626,10 @@ class HermesWebView(context: Context) : WebView(context) {
     }
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean = super.dispatchTouchEvent(event)
+
+    // All scrollable content inside Hermes WebUI uses internal JS overflow scroll (overflow-y:auto on divs).
+    // WebView's own scroll position is always 0. Making scrollTo/scrollBy no-ops prevents the native
+    // WebView gesture recogniser from producing a competing scroll that fights our JS touch→wheel bridge.
+    override fun scrollTo(x: Int, y: Int) { /* no-op: page scroll is JS-internal */ }
+    override fun scrollBy(x: Int, y: Int) { /* no-op: page scroll is JS-internal */ }
 }
