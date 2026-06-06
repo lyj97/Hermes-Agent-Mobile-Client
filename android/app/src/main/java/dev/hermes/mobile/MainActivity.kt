@@ -1292,7 +1292,7 @@ class MainActivity : ComponentActivity() {
                 var lastX=null;
                 var lastY=null;
 
-                // CRITICAL: dispatch to host (.xterm), NOT to .xterm-scrollable-element.
+                // DISPATCH TARGET: .xterm-scrollable-element, NOT .xterm
                 //
                 // xterm 6.x DOM hierarchy:
                 //   .xterm  (CoreBrowserTerminal.element)
@@ -1301,23 +1301,22 @@ class MainActivity : ComponentActivity() {
                 //
                 // Two independent wheel listeners exist:
                 //   A) SmoothScrollableElement on .xterm-scrollable-element {passive:false}
-                //      -> calls _onMouseWheel -> setScrollPosition (pixel scroll)
-                //      -> checks e.browserEvent.defaultPrevented — SKIPS if true
+                //      -> calls _onMouseWheel -> setScrollPosition (raw PIXEL scroll)
                 //   B) CoreBrowserTerminal on .xterm {passive:false}
-                //      -> calls attachCustomWheelEventHandler (ChatPage handler)
-                //      -> ChatPage calls term.scrollLines(step) + ev.preventDefault()
+                //      -> ChatPage handler: term.scrollLines(FIXED_STEP) + ev.preventDefault()
+                //         scrollLines() uses a fixed step regardless of deltaY magnitude.
                 //
-                // Dispatch order when target = .xterm-scrollable-element:
-                //   A fires first (on target) -> scrolls by raw pixel delta
-                //   B fires second (bubble) -> ChatPage handler fires AGAIN -> double scroll
+                // Problem with dispatching to .xterm (old approach):
+                //   B fires first -> term.scrollLines(fixed step) regardless of finger speed
+                //   -> fast swipe (large deltaY, few events) scrolls LESS than slow swipe
+                //      (small deltaY, many events) — inverted scroll speed.
                 //
-                // Dispatch order when target = .xterm:
-                //   B fires first (on target) -> ChatPage handler: term.scrollLines + ev.preventDefault()
-                //   A fires second (bubble) -> sees defaultPrevented=true -> SKIPS (returns early)
-                //
-                // Result: single scroll, driven by ChatPage's line-step logic.
-                function wheelTarget(){
-                  return host; // .xterm — NOT .xterm-scrollable-element
+                // Fix: dispatch to .xterm-scrollable-element with bubbles:false
+                //   A fires (on target) -> raw pixel scroll proportional to deltaY
+                //   B never fires (bubbles:false, so event doesn't reach .xterm ancestor)
+                //   -> scroll distance is directly proportional to finger movement speed.
+                function wheelTarget(host){
+                  return host.querySelector('.xterm-scrollable-element') || host;
                 }
 
                 // touchstart: passive:false so we can preventDefault if needed.
@@ -1346,12 +1345,13 @@ class MainActivity : ComponentActivity() {
                     deltaX:deltaX,
                     deltaY:deltaY,
                     deltaMode:WheelEvent.DOM_DELTA_PIXEL,
-                    bubbles:true,
+                    bubbles:false,
                     cancelable:true
                   });
-                  // Dispatch to .xterm so ChatPage's customWheelEventHandler runs first,
-                  // calls ev.preventDefault(), then scrollableElement's listener skips.
-                  wheelTarget().dispatchEvent(wheel);
+                  // Dispatch to .xterm-scrollable-element (pixel-scroll handler).
+                  // bubbles:false prevents the event from reaching CoreBrowserTerminal's
+                  // line-step handler on .xterm, which would override pixel scroll.
+                  wheelTarget(host).dispatchEvent(wheel);
                 },{passive:false});
 
                 function reset(){
@@ -1972,19 +1972,22 @@ class HermesWebView(context: Context) : WebView(context) {
     // Default false = let WebView handle input natively (login, chat, etc.).
     @Volatile var xtermHelperTextareaFocused: Boolean = false
 
-    override fun onCheckIsTextEditor(): Boolean = true
+    // Let WebView's own logic decide whether this view is a text editor when xterm is not
+    // focused. This ensures chat/login inputs get native IME without us interfering.
+    override fun onCheckIsTextEditor(): Boolean =
+        xtermHelperTextareaFocused || super.onCheckIsTextEditor()
 
-    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection {
+    // Return type is nullable: super.onCreateInputConnection() (Java) can return null when
+    // no editable DOM element is focused (e.g. tapping whitespace). Propagating null is
+    // correct — it tells IME there is no active editor, which is the right behavior for
+    // non-input taps. DO NOT replace null with BaseInputConnection: that creates a dead
+    // sink that swallows all keystrokes without delivering them to the browser DOM.
+    override fun onCreateInputConnection(outAttrs: EditorInfo): InputConnection? {
         // Only hijack input for the xterm terminal when its hidden textarea is focused.
         // For all other elements (login inputs, chat box, etc.) fall back to the default
         // WebView InputConnection so the browser handles text entry natively.
         if (!xtermHelperTextareaFocused) {
-            // super.onCreateInputConnection() is a Java method and can return null when
-            // there is no editable DOM element focused (e.g. tapping non-input areas).
-            // Returning null here is correct: it tells IME this view has no active editor,
-            // preventing a NullPointerException from Kotlin's non-null return contract.
-            @Suppress("NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
-            return super.onCreateInputConnection(outAttrs) ?: return BaseInputConnection(this, false)
+            return super.onCreateInputConnection(outAttrs)  // may be null — propagate as-is
         }
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
