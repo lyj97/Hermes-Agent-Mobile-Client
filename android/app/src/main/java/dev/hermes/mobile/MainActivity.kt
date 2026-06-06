@@ -417,14 +417,22 @@ class MainActivity : ComponentActivity() {
         val srcRect = Rect(location[0], location[1], location[0] + webView.width, location[1] + sampleRows)
         val bitmap = Bitmap.createBitmap(webView.width, sampleRows, Bitmap.Config.ARGB_8888)
         colorSamplingInFlight = true
-        PixelCopy.request(window, srcRect, bitmap, { result ->
+        try {
+            PixelCopy.request(window, srcRect, bitmap, { result ->
+                colorSamplingInFlight = false
+                if (result == PixelCopy.SUCCESS) {
+                    val color = averageTopColor(bitmap, sampleRows)
+                    animateStatusBarColor(color)
+                }
+                bitmap.recycle()
+            }, mainHandler)
+        } catch (e: Exception) {
+            // PixelCopy can throw IllegalArgumentException (bad rect) or
+            // IllegalStateException (surface not ready). Swallow silently —
+            // color sampling is best-effort and will retry on the next tick.
             colorSamplingInFlight = false
-            if (result == PixelCopy.SUCCESS) {
-                val color = averageTopColor(bitmap, sampleRows)
-                animateStatusBarColor(color)
-            }
             bitmap.recycle()
-        }, mainHandler)
+        }
     }
 
     private fun averageTopColor(bitmap: Bitmap, rows: Int): Int {
@@ -1971,7 +1979,12 @@ class HermesWebView(context: Context) : WebView(context) {
         // For all other elements (login inputs, chat box, etc.) fall back to the default
         // WebView InputConnection so the browser handles text entry natively.
         if (!xtermHelperTextareaFocused) {
-            return super.onCreateInputConnection(outAttrs)
+            // super.onCreateInputConnection() is a Java method and can return null when
+            // there is no editable DOM element focused (e.g. tapping non-input areas).
+            // Returning null here is correct: it tells IME this view has no active editor,
+            // preventing a NullPointerException from Kotlin's non-null return contract.
+            @Suppress("NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
+            return super.onCreateInputConnection(outAttrs) ?: return BaseInputConnection(this, false)
         }
         outAttrs.inputType = InputType.TYPE_CLASS_TEXT or
             InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
