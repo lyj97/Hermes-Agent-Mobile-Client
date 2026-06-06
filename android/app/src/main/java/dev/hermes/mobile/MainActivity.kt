@@ -64,15 +64,10 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val LOG_TAG = "HermesWebView"
-private const val HERMES_STATUS_BAR_COLOR = "#031615"
-private const val PREFS_NAME = "hermes_mobile_client"
-private const val PREF_LAST_DASHBOARD_BASE = "last_dashboard_base"
-private const val PREF_TEXT_ZOOM = "text_zoom"
-private const val STATE_WEBVIEW = "state_webview"
-private const val DEFAULT_TEXT_ZOOM = 90
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: HermesWebView
+    private lateinit var hermesPreferences: HermesPreferences
     private lateinit var statusBarView: View
     private lateinit var quickKeysBar: HorizontalScrollView
     private lateinit var root: LinearLayout
@@ -80,7 +75,7 @@ class MainActivity : ComponentActivity() {
     private val startupExecutor = Executors.newSingleThreadExecutor()
     private val attemptedBases = CopyOnWriteArrayList<String>()
     private var showingConnectionHub = false
-    private var statusBarColor = Color.parseColor(HERMES_STATUS_BAR_COLOR)
+    private var statusBarColor = Color.parseColor(HermesConfig.HERMES_STATUS_BAR_COLOR)
     private var statusBarColorAnimator: ValueAnimator? = null
     private var colorSamplingEnabled = false
     private var colorSamplingInFlight = false
@@ -94,6 +89,7 @@ class MainActivity : ComponentActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        hermesPreferences = HermesPreferences(this)
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = android.graphics.Color.TRANSPARENT
         WebView.setWebContentsDebuggingEnabled(false)
@@ -134,7 +130,7 @@ class MainActivity : ComponentActivity() {
                         imm?.restartInput(this@MainActivity.webView)
                     }
                 }
-            }, "HermesFocusBridge")
+            }, HermesConfig.JS_BRIDGE_FOCUS)
 
             setBackgroundColor(Color.rgb(4, 28, 28))
             layoutParams = ViewGroup.LayoutParams(
@@ -152,8 +148,8 @@ class MainActivity : ComponentActivity() {
             settings.setSupportZoom(false)
             settings.builtInZoomControls = false
             settings.displayZoomControls = false
-            settings.textZoom = getSavedTextZoom()
-            settings.userAgentString = "${settings.userAgentString} HermesAgentMobile/0.1"
+            settings.textZoom = hermesPreferences.getSavedTextZoom()
+            settings.userAgentString = "${settings.userAgentString} ${HermesConfig.UA_SUFFIX}"
 
             webChromeClient = object : WebChromeClient() {
                 override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
@@ -190,7 +186,7 @@ class MainActivity : ComponentActivity() {
                         startColorSampling()
                     } else {
                         stopColorSampling()
-                        animateStatusBarColor(Color.parseColor(HERMES_STATUS_BAR_COLOR))
+                        animateStatusBarColor(Color.parseColor(HermesConfig.HERMES_STATUS_BAR_COLOR))
                     }
                 }
 
@@ -277,7 +273,7 @@ class MainActivity : ComponentActivity() {
             }
         })
 
-        val restored = savedInstanceState?.getBundle(STATE_WEBVIEW)?.let { state ->
+        val restored = savedInstanceState?.getBundle(HermesPreferences.STATE_WEBVIEW)?.let { state ->
             webView.restoreState(state)
             true
         } ?: false
@@ -286,7 +282,7 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val lastBase = getSavedDashboardBase()
+        val lastBase = hermesPreferences.getSavedDashboardBase()
         if (!lastBase.isNullOrBlank()) {
             loadDashboardBase(lastBase, persist = false)
         } else {
@@ -309,7 +305,7 @@ class MainActivity : ComponentActivity() {
     private fun createQuickKeysBar(): HorizontalScrollView {
         val container = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(8), 0, dp(8), 0)
+            setPadding(dp(HermesConfig.QUICK_KEYS_HORIZONTAL_PADDING_DP), 0, dp(HermesConfig.QUICK_KEYS_HORIZONTAL_PADDING_DP), 0)
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -334,11 +330,11 @@ class MainActivity : ComponentActivity() {
         return HorizontalScrollView(this).apply {
             visibility = View.GONE
             isHorizontalScrollBarEnabled = false
-            setBackgroundColor(Color.parseColor("#061816"))
+            setBackgroundColor(Color.parseColor(HermesConfig.QuickKeyColors.BAR_BACKGROUND))
             overScrollMode = View.OVER_SCROLL_NEVER
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(44),
+                dp(HermesConfig.QUICK_KEYS_BAR_HEIGHT_DP),
             )
             addView(container)
         }
@@ -347,14 +343,19 @@ class MainActivity : ComponentActivity() {
     private fun createQuickKeyButton(key: QuickKey): TextView {
         return TextView(this).apply {
             text = key.label
-            setTextColor(Color.parseColor("#ffe6cb"))
+            setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
             typeface = Typeface.MONOSPACE
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             gravity = android.view.Gravity.CENTER
             isClickable = true
             isFocusable = true
-            minHeight = dp(44)
-            setPadding(dp(14), dp(10), dp(14), dp(10))
+            minHeight = dp(HermesConfig.QUICK_KEYS_BAR_HEIGHT_DP)
+            setPadding(
+                dp(HermesConfig.QUICK_KEY_HORIZONTAL_PADDING_DP),
+                dp(HermesConfig.QUICK_KEY_VERTICAL_PADDING_DP),
+                dp(HermesConfig.QUICK_KEY_HORIZONTAL_PADDING_DP),
+                dp(HermesConfig.QUICK_KEY_VERTICAL_PADDING_DP),
+            )
             background = quickKeyBackground()
             setOnClickListener {
                 webView.requestFocus()
@@ -364,7 +365,7 @@ class MainActivity : ComponentActivity() {
                 ViewGroup.LayoutParams.WRAP_CONTENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ).apply {
-                marginEnd = dp(4)
+                marginEnd = dp(HermesConfig.QUICK_KEY_MARGIN_END_DP)
             }
         }
     }
@@ -374,9 +375,9 @@ class MainActivity : ComponentActivity() {
             setColor(Color.parseColor(color))
         }
         return StateListDrawable().apply {
-            addState(intArrayOf(android.R.attr.state_pressed), shape("#173a34"))
-            addState(intArrayOf(android.R.attr.state_focused), shape("#173a34"))
-            addState(intArrayOf(), shape("#0d2420"))
+            addState(intArrayOf(android.R.attr.state_pressed), shape(HermesConfig.QuickKeyColors.PRESSED_BACKGROUND))
+            addState(intArrayOf(android.R.attr.state_focused), shape(HermesConfig.QuickKeyColors.FOCUSED_BACKGROUND))
+            addState(intArrayOf(), shape(HermesConfig.QuickKeyColors.DEFAULT_BACKGROUND))
         }
     }
 
@@ -475,15 +476,15 @@ class MainActivity : ComponentActivity() {
         super.onSaveInstanceState(outState)
         val webState = Bundle()
         webView.saveState(webState)
-        outState.putBundle(STATE_WEBVIEW, webState)
+        outState.putBundle(HermesPreferences.STATE_WEBVIEW, webState)
     }
 
     private fun renderConnectionHome() {
         showingConnectionHub = true
-        val saved = getSavedDashboardBase()
+        val saved = hermesPreferences.getSavedDashboardBase()
         val savedBlock = if (!saved.isNullOrBlank()) {
             """
-            <a class="primary" href="hermes://saved">
+            <a class="primary" href="${HermesConfig.AppScheme.URL_SAVED}">
               <span class="icon">↻</span>
               <span><b>Resume saved connection</b><small>$saved</small></span>
             </a>
@@ -531,7 +532,7 @@ class MainActivity : ComponentActivity() {
               <div class="wrap">
                 <div class="top">
                   <div class="brand">Hermes Agent</div>
-                  <a class="menu" href="hermes://menu">Power</a>
+                  <a class="menu" href="${HermesConfig.AppScheme.URL_MENU}">Power</a>
                 </div>
                 <div class="mark">☤</div>
                 <h1>Connect your Hermes</h1>
@@ -539,17 +540,17 @@ class MainActivity : ComponentActivity() {
                 <div class="rail">Recommended path: Tailscale on phone + host, then one connector command.</div>
                 <div class="stack">
                   $savedBlock
-                  <a class="primary" href="hermes://script">
+                  <a class="primary" href="${HermesConfig.AppScheme.URL_SCRIPT}">
                     <span class="icon">⌁</span>
                     <span><b>Install Hermes Mobile Connector</b><small>Copy the npx command for PC, Mac, Linux, or VPS.</small></span>
                   </a>
-                  <a class="choice" href="hermes://manual">
+                  <a class="choice" href="${HermesConfig.AppScheme.URL_MANUAL}">
                     <span class="icon">↗</span>
                     <span><b>Paste connector URL</b><small>Use the URL printed by the connector, usually a Tailscale address.</small></span>
                   </a>
-                  <a class="choice" href="hermes://discover">
+                  <a class="choice" href="${HermesConfig.AppScheme.URL_DISCOVER}">
                     <span class="icon">⌕</span>
-                    <span><b>Scan same Wi-Fi</b><small>Fallback for local dashboards on port 9119.</small></span>
+                    <span><b>Scan same Wi-Fi</b><small>Fallback for local dashboards on port ${HermesConfig.HERMES_DEFAULT_PORT}.</small></span>
                   </a>
                 </div>
                 <div class="hint">No mocks. No separate mobile backend. This app opens the real Hermes dashboard.</div>
@@ -562,7 +563,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun connectSavedOrManual() {
-        val lastBase = getSavedDashboardBase()
+        val lastBase = hermesPreferences.getSavedDashboardBase()
         if (!lastBase.isNullOrBlank()) {
             loadDashboardBase(lastBase, persist = false)
         } else {
@@ -574,7 +575,7 @@ class MainActivity : ComponentActivity() {
         renderStatusPage("Scanning local network for Hermes dashboard...", attemptedBases.toList())
         startupExecutor.execute {
             Log.d(LOG_TAG, "bootstrap: start")
-            val lastBase = getSavedDashboardBase()
+            val lastBase = hermesPreferences.getSavedDashboardBase()
             if (!lastBase.isNullOrBlank() && isHermesDashboardBase(lastBase)) {
                 Log.d(LOG_TAG, "bootstrap: using last base $lastBase")
                 loadDashboardBase(lastBase, persist = false)
@@ -604,13 +605,10 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (persist) {
-            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putString(PREF_LAST_DASHBOARD_BASE, normalizedBase)
-                .apply()
+            hermesPreferences.saveDashboardBase(normalizedBase)
         }
         showingConnectionHub = false
-        val chatUrl = "$normalizedBase/chat"
+        val chatUrl = "$normalizedBase${HermesConfig.ENDPOINT_CHAT}"
         renderStatusPage("Opening Hermes dashboard...", listOf(normalizedBase))
         startupExecutor.execute {
             warmupDashboard(normalizedBase)
@@ -620,10 +618,10 @@ class MainActivity : ComponentActivity() {
 
     private fun warmupDashboard(base: String) {
         runCatching {
-            val conn = (URL("$base/api/status").openConnection() as HttpURLConnection).apply {
+            val conn = (URL("$base${HermesConfig.ENDPOINT_API_STATUS}").openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 800
-                readTimeout = 800
+                connectTimeout = HermesConfig.WARMUP_TIMEOUT_MS
+                readTimeout = HermesConfig.WARMUP_TIMEOUT_MS
                 instanceFollowRedirects = true
             }
             conn.inputStream.use { it.readNBytes(32) }
@@ -631,30 +629,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun getSavedDashboardBase(): String? {
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val raw = prefs.getString(PREF_LAST_DASHBOARD_BASE, null) ?: return null
-        val normalized = normalizeDashboardBase(raw)
-        if (normalized.isNotBlank() && normalized != raw) {
-            prefs.edit().putString(PREF_LAST_DASHBOARD_BASE, normalized).apply()
-        }
-        return normalized.ifBlank { null }
-    }
-
-    private fun getSavedTextZoom(): Int {
-        return getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getInt(PREF_TEXT_ZOOM, DEFAULT_TEXT_ZOOM)
-            .coerceIn(60, 160)
-    }
-
     private fun discoverHermesDashboardBases(): List<String> {
         val candidates = linkedSetOf<String>()
 
         discoverViaMdns().forEach { host ->
-            candidates += "http://$host:9119"
+            candidates += "http://$host:${HermesConfig.HERMES_DEFAULT_PORT}"
         }
         discoverViaLanProbe().forEach { host ->
-            candidates += "http://$host:9119"
+            candidates += "http://$host:${HermesConfig.HERMES_DEFAULT_PORT}"
         }
 
         val verified = mutableListOf<String>()
@@ -728,7 +710,7 @@ class MainActivity : ComponentActivity() {
                 pool.execute {
                     if (stop.get()) return@execute
                     val host = "$prefix$i"
-                    if (isHermesDashboardBase("http://$host:9119")) {
+                    if (isHermesDashboardBase("http://$host:${HermesConfig.HERMES_DEFAULT_PORT}")) {
                         found += host
                         stop.set(true)
                     }
@@ -746,13 +728,13 @@ class MainActivity : ComponentActivity() {
     private fun isHermesDashboardBase(baseUrl: String): Boolean {
         val clean = normalizeDashboardBase(baseUrl)
         if (clean.isBlank()) return false
-        val statusUrl = "$clean/api/status"
+        val statusUrl = "$clean${HermesConfig.ENDPOINT_API_STATUS}"
         return try {
             Log.d(LOG_TAG, "probe $statusUrl")
             val conn = (URL(statusUrl).openConnection() as HttpURLConnection).apply {
                 requestMethod = "GET"
-                connectTimeout = 1200
-                readTimeout = 1200
+                connectTimeout = HermesConfig.DISCOVERY_CONNECT_TIMEOUT_MS
+                readTimeout = HermesConfig.DISCOVERY_CONNECT_TIMEOUT_MS
                 instanceFollowRedirects = true
             }
             val code = conn.responseCode
@@ -768,7 +750,7 @@ class MainActivity : ComponentActivity() {
         val attemptedHtml = if (attempted.isEmpty()) {
             "<li>No endpoints attempted yet.</li>"
         } else {
-            attempted.joinToString("") { "<li>${normalizeDashboardBase(it)}/api/status</li>" }
+            attempted.joinToString("") { "<li>${normalizeDashboardBase(it)}${HermesConfig.ENDPOINT_API_STATUS}</li>" }
         }
         val html = """
             <html><body style="background:#041c1c;color:#ffe6cb;font-family:monospace;padding:24px;line-height:1.45">
@@ -776,7 +758,7 @@ class MainActivity : ComponentActivity() {
             <p style="margin:0 0 10px 0">$message</p>
             <p style="margin:0 0 6px 0">Attempted endpoints:</p>
             <ul style="margin:0 0 12px 0;padding-left:20px">$attemptedHtml</ul>
-            <p style="margin:0">Ensure Hermes dashboard is reachable on port 9119 from this phone network, then relaunch app.</p>
+            <p style="margin:0">Ensure Hermes dashboard is reachable on port ${HermesConfig.HERMES_DEFAULT_PORT} from this phone network, then relaunch app.</p>
             </body></html>
         """.trimIndent()
         mainHandler.post { webView.loadDataWithBaseURL(null, html, "text/html", "utf-8", null) }
@@ -785,9 +767,9 @@ class MainActivity : ComponentActivity() {
     private fun promptForManualEndpoint() {
         mainHandler.post {
             val input = EditText(this).apply {
-                hint = "http://device.tailnet.ts.net:9119"
+                hint = "http://device.tailnet.ts.net:${HermesConfig.HERMES_DEFAULT_PORT}"
                 setText("http://")
-                setTextColor(Color.parseColor("#ffe6cb"))
+                setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
                 setHintTextColor(Color.parseColor("#89917e"))
                 setBackgroundColor(Color.parseColor("#0d1d18"))
                 setPadding(28, 22, 28, 22)
@@ -799,7 +781,7 @@ class MainActivity : ComponentActivity() {
             }
             val title = TextView(this).apply {
                 text = "PASTE CONNECTOR URL"
-                setTextColor(Color.parseColor("#ffe6cb"))
+                setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
                 textSize = 16f
                 setPadding(0, 0, 0, 10)
             }
@@ -859,7 +841,7 @@ class MainActivity : ComponentActivity() {
                 .substringBefore("?")
                 .substringBefore("#")
                 .removeSuffix("/")
-                .removeSuffix("/chat")
+                .removeSuffix(HermesConfig.ENDPOINT_CHAT)
                 .removeSuffix("/")
         }
     }
@@ -904,23 +886,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleInternalUrl(url: String): Boolean {
-        if (!url.startsWith("hermes://")) return false
+        if (!url.startsWith(HermesConfig.AppScheme.PREFIX)) return false
         val host = runCatching { Uri.parse(url).host.orEmpty() }.getOrDefault("")
         when (host) {
-            "discover" -> bootstrapDashboardConnection()
-            "manual" -> promptForManualEndpoint()
-            "saved" -> connectSavedOrManual()
-            "script" -> showVpsScriptDialog()
-            "menu" -> showHamburgerMenu()
-            "textsize" -> showTextSizeDialog()
-            "connector" -> showConnectorStateDialog()
-            "reloadtui" -> reloadFreshTui()
+            HermesConfig.AppScheme.HOST_DISCOVER -> bootstrapDashboardConnection()
+            HermesConfig.AppScheme.HOST_MANUAL -> promptForManualEndpoint()
+            HermesConfig.AppScheme.HOST_SAVED -> connectSavedOrManual()
+            HermesConfig.AppScheme.HOST_SCRIPT -> showVpsScriptDialog()
+            HermesConfig.AppScheme.HOST_MENU -> showHamburgerMenu()
+            HermesConfig.AppScheme.HOST_TEXT_SIZE -> showTextSizeDialog()
+            HermesConfig.AppScheme.HOST_CONNECTOR -> showConnectorStateDialog()
+            HermesConfig.AppScheme.HOST_RELOAD_TUI -> reloadFreshTui()
         }
         return true
     }
 
     private fun reloadFreshTui() {
-        val base = getSavedDashboardBase()
+        val base = hermesPreferences.getSavedDashboardBase()
         if (base.isNullOrBlank()) {
             renderConnectionHome()
             return
@@ -928,12 +910,12 @@ class MainActivity : ComponentActivity() {
         showingConnectionHub = false
         renderStatusPage("Opening fresh Hermes TUI...", listOf(base))
         webView.postDelayed({
-            webView.loadUrl("$base/chat")
+            webView.loadUrl("$base${HermesConfig.ENDPOINT_CHAT}")
         }, 80)
     }
 
     private fun showConnectorStateDialog() {
-        val base = getSavedDashboardBase()
+        val base = hermesPreferences.getSavedDashboardBase()
         if (base.isNullOrBlank()) {
             AlertDialog.Builder(this)
                 .setTitle("Connector State")
@@ -951,10 +933,10 @@ class MainActivity : ComponentActivity() {
 
         startupExecutor.execute {
             val message = runCatching {
-                val conn = (URL("$base/api/status").openConnection() as HttpURLConnection).apply {
+                val conn = (URL("$base${HermesConfig.ENDPOINT_API_STATUS}").openConnection() as HttpURLConnection).apply {
                     requestMethod = "GET"
-                    connectTimeout = 2500
-                    readTimeout = 2500
+                    connectTimeout = HermesConfig.CONNECT_TIMEOUT_MS
+                    readTimeout = HermesConfig.READ_TIMEOUT_MS
                     instanceFollowRedirects = true
                 }
                 val code = conn.responseCode
@@ -1007,7 +989,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun logoutAndReset() {
-        getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit().clear().apply()
+        hermesPreferences.clearDashboardBase()
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
         webView.clearHistory()
@@ -1016,16 +998,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showTextSizeDialog() {
-        val current = getSavedTextZoom()
+        val current = hermesPreferences.getSavedTextZoom()
         val title = TextView(this).apply {
             text = "Text Size: $current%"
-            setTextColor(Color.parseColor("#ffe6cb"))
+            setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
             textSize = 14f
             setPadding(0, 0, 0, 16)
         }
         val slider = SeekBar(this).apply {
-            max = 100
-            progress = current - 60
+            max = HermesConfig.TEXT_ZOOM_MAX - HermesConfig.TEXT_ZOOM_MIN
+            progress = current - HermesConfig.TEXT_ZOOM_MIN
         }
         val wrapper = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1037,10 +1019,7 @@ class MainActivity : ComponentActivity() {
 
         val applyZoom = { zoom: Int ->
             webView.settings.textZoom = zoom
-            getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putInt(PREF_TEXT_ZOOM, zoom)
-                .apply()
+            hermesPreferences.saveTextZoom(zoom)
             triggerTerminalRelayout(webView)
         }
 
@@ -1048,7 +1027,10 @@ class MainActivity : ComponentActivity() {
             var changedDuringDrag = false
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
-                val zoom = (progress + 60).coerceIn(60, 160)
+                val zoom = (progress + HermesConfig.TEXT_ZOOM_MIN).coerceIn(
+                    HermesConfig.TEXT_ZOOM_MIN,
+                    HermesConfig.TEXT_ZOOM_MAX,
+                )
                 title.text = "Text Size: ${zoom}%"
                 applyZoom(zoom)
                 changedDuringDrag = true
@@ -1105,19 +1087,19 @@ class MainActivity : ComponentActivity() {
               if(!document.getElementById('hermes-mobile-power')){
                 var b=document.createElement('a');
                 b.id='hermes-mobile-power';
-                b.href='hermes://menu';
+                b.href='${HermesConfig.AppScheme.URL_MENU}';
                 b.setAttribute('aria-label','Power');
                 b.setAttribute('title','Power');
                 b.innerHTML='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/></svg>';
                 var z=document.createElement('a');
                 z.id='hermes-mobile-textsize';
-                z.href='hermes://textsize';
+                z.href='${HermesConfig.AppScheme.URL_TEXT_SIZE}';
                 z.setAttribute('aria-label','Text Size');
                 z.setAttribute('title','Text Size');
                 z.textContent='A';
                 var d=document.createElement('a');
                 d.id='hermes-mobile-connector';
-                d.href='hermes://connector';
+                d.href='${HermesConfig.AppScheme.URL_CONNECTOR}';
                 d.setAttribute('aria-label','Connector State');
                 d.setAttribute('title','Connector State');
                 d.textContent='●';
@@ -1171,7 +1153,7 @@ class MainActivity : ComponentActivity() {
               if(!document.getElementById('hermes-mobile-dead-session')){
                 var dead=document.createElement('div');
                 dead.id='hermes-mobile-dead-session';
-                dead.innerHTML='<div><strong>TUI session ended</strong><span>Open a fresh Hermes terminal and resume there.</span></div><a href="hermes://reloadtui">Open fresh TUI</a>';
+                dead.innerHTML='<div><strong>TUI session ended</strong><span>Open a fresh Hermes terminal and resume there.</span></div><a href="${HermesConfig.AppScheme.URL_RELOAD_TUI}">Open fresh TUI</a>';
                 document.body.appendChild(dead);
               }
               if(!window.__HermesMobileDeadSessionWatch){
@@ -1201,7 +1183,7 @@ class MainActivity : ComponentActivity() {
         webView.post {
             val json = org.json.JSONObject.quote(text)
             webView.evaluateJavascript(
-                "window.HermesMobileNativeInput&&window.HermesMobileNativeInput.text($json)",
+                "window.${HermesConfig.JS_BRIDGE_INPUT}&&window.${HermesConfig.JS_BRIDGE_INPUT}.text($json)",
                 null,
             )
         }
@@ -1211,7 +1193,7 @@ class MainActivity : ComponentActivity() {
         webView.post {
             val json = org.json.JSONObject.quote(key)
             webView.evaluateJavascript(
-                "window.HermesMobileNativeInput&&window.HermesMobileNativeInput.key($json)",
+                "window.${HermesConfig.JS_BRIDGE_INPUT}&&window.${HermesConfig.JS_BRIDGE_INPUT}.key($json)",
                 null,
             )
         }
@@ -1393,7 +1375,7 @@ class MainActivity : ComponentActivity() {
         view.evaluateJavascript(
             """
             (function(){
-              if(window.HermesMobileNativeInput) return;
+              if(window.${HermesConfig.JS_BRIDGE_INPUT}) return;
 
               function terminalTarget(){
                 return document.querySelector('.xterm-helper-textarea')
@@ -1476,7 +1458,7 @@ class MainActivity : ComponentActivity() {
                 return true;
               }
 
-              window.HermesMobileNativeInput = {
+              window.${HermesConfig.JS_BRIDGE_INPUT} = {
                 text: sendText,
                 key: sendKey
               };
@@ -1489,8 +1471,8 @@ class MainActivity : ComponentActivity() {
                 window.__hermesFocusTrackerInstalled = true;
 
                 function notify(focused) {
-                  if (window.HermesFocusBridge && window.HermesFocusBridge.setXtermHelperTextareaFocused) {
-                    window.HermesFocusBridge.setXtermHelperTextareaFocused(focused);
+                  if (window.${HermesConfig.JS_BRIDGE_FOCUS} && window.${HermesConfig.JS_BRIDGE_FOCUS}.setXtermHelperTextareaFocused) {
+                    window.${HermesConfig.JS_BRIDGE_FOCUS}.setXtermHelperTextareaFocused(focused);
                   }
                 }
 
