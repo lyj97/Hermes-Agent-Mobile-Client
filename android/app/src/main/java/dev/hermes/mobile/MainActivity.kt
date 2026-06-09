@@ -164,6 +164,11 @@ class MainActivity : ComponentActivity() {
                 override fun onPageFinished(view: WebView, url: String) {
                     super.onPageFinished(view, url)
                     Log.d(LOG_TAG, "Loaded $url")
+                    if (url.contains("/hermes-login")) {
+                        val baseUrl = url.substringBefore("/hermes-login")
+                        showLoginInterceptDialog(baseUrl)
+                        return
+                    }
                     if (url.startsWith("http://") || url.startsWith("https://")) {
                         WebViewInjectors.injectMobileChrome(view, showingConnectionHub)
                         WebViewInjectors.injectMobileInputBridge(view, showingConnectionHub)
@@ -982,6 +987,65 @@ class MainActivity : ComponentActivity() {
                 onComplete?.invoke()
             }
             .setNegativeButton("Skip") { _, _ -> onComplete?.invoke() }
+            .show()
+    }
+
+    private fun showLoginInterceptDialog(baseUrl: String) {
+        val savedCredentials = hermesPreferences.loadCredentials(baseUrl)
+        val usernameInput = EditText(this).apply {
+            hint = "Username"
+            setText(savedCredentials?.first.orEmpty())
+            setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
+            setHintTextColor(Color.parseColor("#89917e"))
+            setBackgroundColor(Color.parseColor("#0d1d18"))
+            setPadding(28, 22, 28, 22)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_NORMAL
+        }
+        val passwordInput = EditText(this).apply {
+            hint = "Password"
+            setText(savedCredentials?.second.orEmpty())
+            setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
+            setHintTextColor(Color.parseColor("#89917e"))
+            setBackgroundColor(Color.parseColor("#0d1d18"))
+            setPadding(28, 22, 28, 22)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val message = TextView(this).apply {
+            text = "Enter credentials to connect."
+            setTextColor(Color.parseColor("#89917e"))
+            textSize = 12f
+            setPadding(0, 0, 0, 14)
+        }
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#041c1c"))
+            setPadding(36, 28, 36, 20)
+            addView(message)
+            addView(usernameInput)
+            addView(passwordInput)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Log in to Hermes")
+            .setView(wrapper)
+            .setPositiveButton("Login") { _, _ ->
+                hideKeyboard(passwordInput)
+                val username = usernameInput.text?.toString().orEmpty()
+                val password = passwordInput.text?.toString().orEmpty()
+                val chatUrl = "$baseUrl${HermesConfig.ENDPOINT_CHAT}"
+                if (username.isNotBlank() && password.isNotBlank()) {
+                    hermesPreferences.saveCredentials(baseUrl, username, password)
+                    startupExecutor.execute {
+                        attemptAutoLogin(baseUrl)
+                        mainHandler.post { webView.loadUrl(chatUrl) }
+                    }
+                } else {
+                    webView.loadUrl(chatUrl)
+                }
+            }
+            .setNegativeButton("Fill form manually") { _, _ ->
+                hideKeyboard(passwordInput)
+            }
             .show()
     }
 
