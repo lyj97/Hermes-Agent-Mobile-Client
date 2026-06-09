@@ -16,6 +16,7 @@ import android.graphics.drawable.StateListDrawable
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.text.InputType
 import android.util.Log
 import android.util.TypedValue
 import android.view.PixelCopy
@@ -615,7 +616,50 @@ class MainActivity : ComponentActivity() {
         renderStatusPage("Opening Hermes dashboard...", listOf(normalizedBase))
         startupExecutor.execute {
             warmupDashboard(normalizedBase)
+            attemptAutoLogin(normalizedBase)
             mainHandler.post { webView.loadUrl(chatUrl) }
+        }
+    }
+
+    private fun attemptAutoLogin(baseUrl: String): Boolean {
+        val (username, password) = hermesPreferences.loadCredentials(baseUrl) ?: return false
+        return try {
+            val loginUrl = "$baseUrl/hermes-login"
+            val body = "username=${Uri.encode(username)}&password=${Uri.encode(password)}"
+            val conn = (URL(loginUrl).openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                setRequestProperty("User-Agent", HermesConfig.UA_SUFFIX)
+                doOutput = true
+                instanceFollowRedirects = false
+                connectTimeout = 5000
+                readTimeout = 5000
+            }
+            try {
+                conn.outputStream.use { out ->
+                    out.write(body.toByteArray(Charsets.UTF_8))
+                    out.flush()
+                }
+                val status = conn.responseCode
+                if (status == HttpURLConnection.HTTP_MOVED_TEMP || status == HttpURLConnection.HTTP_OK) {
+                    conn.headerFields
+                        .filterKeys { it.equals("Set-Cookie", ignoreCase = true) }
+                        .values
+                        .flatten()
+                        .forEach { cookieHeader ->
+                            CookieManager.getInstance().setCookie(baseUrl, cookieHeader)
+                        }
+                    CookieManager.getInstance().flush()
+                    true
+                } else {
+                    false
+                }
+            } finally {
+                conn.disconnect()
+            }
+        } catch (e: Exception) {
+            Log.w(LOG_TAG, "Auto-login failed: $e")
+            false
         }
     }
 
@@ -693,7 +737,10 @@ class MainActivity : ComponentActivity() {
                     val base = DashboardDiscoveryService.normalizeDashboardBase(raw)
                     if (base.isNotBlank()) {
                         attemptedBases += base
-                        loadDashboardBase(base, persist = true)
+                        hermesPreferences.saveDashboardBase(base)
+                        showCredentialsDialog(base) {
+                            loadDashboardBase(base, persist = false)
+                        }
                     } else {
                         renderStatusPage("Manual endpoint is empty.", attemptedBases.toList())
                         renderConnectionHome()
@@ -848,22 +895,94 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun showHamburgerMenu() {
+        val items = arrayOf("Edit credentials", "Logout")
         AlertDialog.Builder(this)
             .setTitle("Menu")
-            .setItems(arrayOf("Logout")) { _, which ->
-                if (which == 0) logoutAndReset()
+            .setItems(items) { _, which ->
+                when (items[which]) {
+                    "Edit credentials" -> {
+                        val base = hermesPreferences.getSavedDashboardBase()
+                        if (base.isNullOrBlank()) {
+                            AlertDialog.Builder(this)
+                                .setTitle("Edit credentials")
+                                .setMessage("No saved Hermes connector URL yet.")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        } else {
+                            showCredentialsDialog(base)
+                        }
+                    }
+                    "Logout" -> logoutAndReset()
+                }
             }
             .setNegativeButton("Close", null)
             .show()
     }
 
     private fun logoutAndReset() {
+        val currentBase = hermesPreferences.getSavedDashboardBase()
+        if (!currentBase.isNullOrBlank()) {
+            hermesPreferences.clearCredentials(currentBase)
+        }
         hermesPreferences.clearDashboardBase()
         CookieManager.getInstance().removeAllCookies(null)
         CookieManager.getInstance().flush()
         webView.clearHistory()
         webView.clearCache(true)
         renderConnectionHome()
+    }
+
+    private fun showCredentialsDialog(baseUrl: String, onComplete: (() -> Unit)? = null) {
+        val savedCredentials = hermesPreferences.loadCredentials(baseUrl)
+        val usernameInput = EditText(this).apply {
+            hint = "Username"
+            setText(savedCredentials?.first.orEmpty())
+            setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
+            setHintTextColor(Color.parseColor("#89917e"))
+            setBackgroundColor(Color.parseColor("#0d1d18"))
+            setPadding(28, 22, 28, 22)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_NORMAL
+        }
+        val passwordInput = EditText(this).apply {
+            hint = "Password"
+            setText(savedCredentials?.second.orEmpty())
+            setTextColor(Color.parseColor(HermesConfig.QuickKeyColors.TEXT))
+            setHintTextColor(Color.parseColor("#89917e"))
+            setBackgroundColor(Color.parseColor("#0d1d18"))
+            setPadding(28, 22, 28, 22)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
+        val message = TextView(this).apply {
+            text = "Enter username and password to log in automatically next time."
+            setTextColor(Color.parseColor("#89917e"))
+            textSize = 12f
+            setPadding(0, 0, 0, 14)
+        }
+        val wrapper = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(Color.parseColor("#041c1c"))
+            setPadding(36, 28, 36, 20)
+            addView(message)
+            addView(usernameInput)
+            addView(passwordInput)
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("Save login credentials?")
+            .setView(wrapper)
+            .setPositiveButton("Save") { _, _ ->
+                hideKeyboard(passwordInput)
+                val username = usernameInput.text?.toString().orEmpty()
+                val password = passwordInput.text?.toString().orEmpty()
+                if (username.isBlank() && password.isBlank()) {
+                    hermesPreferences.clearCredentials(baseUrl)
+                } else {
+                    hermesPreferences.saveCredentials(baseUrl, username, password)
+                }
+                onComplete?.invoke()
+            }
+            .setNegativeButton("Skip") { _, _ -> onComplete?.invoke() }
+            .show()
     }
 
     private fun showTextSizeDialog() {
