@@ -133,8 +133,8 @@ The existing logout already clears cookies. Also call `hermesPreferences.clearCr
 - Keep all new strings in Kotlin (no strings.xml needed)
 - After all changes, build with:
   ```
-  export JAVA_HOME=/home/lu/Software/android-studio/jbr
-  export ANDROID_HOME=/home/lu/Android/Sdk
+  export JAVA_HOME=/path/to/android-studio/jbr
+  export ANDROID_HOME=/path/to/Android/Sdk
   cd android && ./gradlew assembleDebug
   ```
 - Fix any compile errors. Report DONE and build result when complete.

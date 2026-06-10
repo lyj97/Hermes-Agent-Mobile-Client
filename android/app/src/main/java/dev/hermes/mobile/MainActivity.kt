@@ -772,14 +772,14 @@ class MainActivity : ComponentActivity() {
             # Run this where Hermes Agent is installed.
             # Recommended: install Tailscale on this machine and on your phone first.
 
-            npx github:areu01or00/Hermes-Agent-Mobile-Client install
+            npx github:your-org-or-user/Hermes-Agent-Mobile-Client install
 
             # Later:
-            npx github:areu01or00/Hermes-Agent-Mobile-Client status
-            npx github:areu01or00/Hermes-Agent-Mobile-Client url
-            npx github:areu01or00/Hermes-Agent-Mobile-Client restart
-            npx github:areu01or00/Hermes-Agent-Mobile-Client logs
-            npx github:areu01or00/Hermes-Agent-Mobile-Client uninstall
+            npx github:your-org-or-user/Hermes-Agent-Mobile-Client status
+            npx github:your-org-or-user/Hermes-Agent-Mobile-Client url
+            npx github:your-org-or-user/Hermes-Agent-Mobile-Client restart
+            npx github:your-org-or-user/Hermes-Agent-Mobile-Client logs
+            npx github:your-org-or-user/Hermes-Agent-Mobile-Client uninstall
         """.trimIndent()
 
         val scroll = ScrollView(this).apply {

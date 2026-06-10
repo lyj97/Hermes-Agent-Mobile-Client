@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Legacy wrapper. Prefer:
-#   npx github:areu01or00/Hermes-Agent-Mobile-Client install
+#   npx github:your-org-or-user/Hermes-Agent-Mobile-Client install
 #
 # Kept for users who already copied the old VPS script path.
 
