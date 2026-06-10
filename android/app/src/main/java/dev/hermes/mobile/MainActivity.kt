@@ -174,6 +174,9 @@ class MainActivity : ComponentActivity() {
                         WebViewInjectors.injectMobileInputBridge(view, showingConnectionHub)
                         WebViewInjectors.injectTerminalTouchWheelBridge(view, showingConnectionHub)
                         WebViewInjectors.triggerTerminalRelayout(view)
+                        if (!showingConnectionHub) {
+                            webView.clearHistory()
+                        }
                         mainHandler.postDelayed({ sampleWebViewTopColor() }, 500L)
                         startColorSampling()
                     } else {
@@ -257,7 +260,9 @@ class MainActivity : ComponentActivity() {
 
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
+                if (showingConnectionHub) {
+                    finish()
+                } else if (webView.canGoBack()) {
                     webView.goBack()
                 } else {
                     finish()
