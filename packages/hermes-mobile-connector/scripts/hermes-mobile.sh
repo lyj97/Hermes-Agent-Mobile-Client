@@ -186,7 +186,7 @@ install_connector() {
 
   if ! health; then
     echo "Hermes dashboard did not become healthy at http://127.0.0.1:${PORT}/api/status" >&2
-    echo "Run: npx github:areu01or00/Hermes-Agent-Mobile-Client logs" >&2
+    echo "Run: npx github:your-org-or-user/Hermes-Agent-Mobile-Client logs" >&2
     exit 1
   fi
 

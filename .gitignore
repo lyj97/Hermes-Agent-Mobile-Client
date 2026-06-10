@@ -6,6 +6,11 @@ build/
 # Local Android configuration
 local.properties
 
+# Environment and service configuration
+.env
+*.env.local
+google-services.json
+
 # IDE files
 .idea/
 *.iml
@@ -23,7 +28,12 @@ local.properties
 *.p12
 *.pem
 *.idsig
+*secret*
+*Secret*
+*SECRET*
+*key*
+*Key*
+*KEY*
 
-# Keep the intentionally published APK artifacts in apk/.
-!apk/hermes-agent-mobile-client-debug.apk
-!apk/hermes-agent-mobile-client-release.apk
+# APKs are build outputs and should be published through releases, not git.
+/apk/

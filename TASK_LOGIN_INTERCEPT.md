@@ -42,7 +42,7 @@ This is a NEW private function in MainActivity. It should:
    - Button [Fill form manually]: dismiss dialog, do nothing — user fills the web form in WebView themselves
 
 3. `baseUrl` to use: derive it from the loaded URL by stripping `/hermes-login` suffix.
-   Example: `"https://your-hermes-server.example.com:19120/hermes-login"` → `"https://your-hermes-server.example.com:19120"`
+   Example: `"https://your-hermes-server.example.com/hermes-login"` → `"https://your-hermes-server.example.com"`
    Use: `url.substringBefore("/hermes-login")`
 
 ### Thread safety
@@ -61,8 +61,8 @@ This is a NEW private function in MainActivity. It should:
 - Keep new strings in Kotlin only (no strings.xml)
 - After changes, build:
   ```
-  export JAVA_HOME=/home/lu/Software/android-studio/jbr
-  export ANDROID_HOME=/home/lu/Android/Sdk
+  export JAVA_HOME=/path/to/android-studio/jbr
+  export ANDROID_HOME=/path/to/Android/Sdk
   cd android && ./gradlew assembleDebug
   ```
 - Fix any compile errors
